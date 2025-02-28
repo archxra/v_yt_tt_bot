@@ -4,13 +4,13 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
 
+print("Cookies file exists:", os.path.exists("cookies.txt"))
+
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'  # Замените на токен вашего бота
-
-print("Cookies file exists:", os.path.exists("cookies.txt"))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -23,7 +23,7 @@ def download_video(url: str) -> str:
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        'cookies': 'cookies.txt',  # Path to your cookies file
+        'cookiefile': 'cookies.txt',  # Path to your cookies file
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
