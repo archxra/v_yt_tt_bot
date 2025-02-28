@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'  # Замените на токен вашего бота
 
+print("Cookies file exists:", os.path.exists("cookies.txt"))
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео с YouTube или TikTok, чтобы скачать его в формате MP4."
