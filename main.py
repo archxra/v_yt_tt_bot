@@ -22,6 +22,7 @@ def download_video(url: str) -> str:
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
+        'cookies': 'cookies.txt'
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
