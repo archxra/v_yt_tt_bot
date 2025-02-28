@@ -16,13 +16,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 def download_video(url: str) -> str:
-    # Параметры для yt-dlp
     ydl_opts = {
         'format': 'mp4',
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        'cookies': 'cookies.txt'
+        'cookies': 'cookies.txt',  # Path to your cookies file
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
