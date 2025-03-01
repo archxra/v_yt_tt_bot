@@ -38,9 +38,9 @@ def run_flask():
 
 def parse_title(full_title: str):
     """
-    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
+    Looks for common delimiters (hyphen variants and colon) in the title.
     If found, splits the title into artist and song title.
-    If not, returns None for artist and the full title as song_title.
+    If not, returns (None, full_title).
     """
     delimiters = ['-', '–', '—', ':']
     index = None
@@ -48,6 +48,7 @@ def parse_title(full_title: str):
     for delim in delimiters:
         idx = full_title.find(delim)
         if idx != -1:
+            # choose the earliest delimiter occurrence
             if index is None or idx < index:
                 index = idx
                 chosen_delim = delim
@@ -89,8 +90,8 @@ def download_audio(url: str) -> str:
     Downloads the audio as an MP3 using yt_dlp.
     It extracts the video's title and attempts to split it using common delimiters.
     If a delimiter is found, the left part becomes the artist and the right part the song title.
-    If not, the entire title is used as the song title and artist remains empty.
-    The FFmpeg postprocessor embeds the metadata accordingly, and the output file is renamed.
+    Extra ffmpeg arguments are passed via 'args' to embed the metadata.
+    The output file is then renamed to the video's full title (sanitized).
     """
     # Base options for yt_dlp extraction and conversion
     ydl_opts = {
@@ -100,11 +101,12 @@ def download_audio(url: str) -> str:
         'quiet': True,
         'cookiefile': 'cookies.txt',
         'addmetadata': True,
+        # Use 'args' instead of 'postprocessor_args' if required by your version
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
-            'postprocessor_args': [],  # We'll set these below based on metadata
+            'args': [],  # Placeholder; will set below
         }],
     }
     
@@ -115,17 +117,17 @@ def download_audio(url: str) -> str:
     full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
     if artist is None:
-        # No delimiter found; leave the title as-is and artist empty
+        # No delimiter found; leave artist empty and song_title as full title
         artist = ""
         song_title = full_title
 
-    # Update postprocessor_args with metadata for ffmpeg
-    ydl_opts["postprocessors"][0]["postprocessor_args"] = [
+    # Update the ffmpeg arguments with the metadata
+    ydl_opts["postprocessors"][0]["args"] = [
         '-metadata', f'title={song_title}',
         '-metadata', f'artist={artist}',
     ]
     
-    # Download the audio with updated options
+    # Download the audio with the updated options
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         temp_filename = ydl.prepare_filename(info_dict)
