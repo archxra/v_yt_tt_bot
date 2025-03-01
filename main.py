@@ -135,7 +135,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback
+        new_filename = mp3_temp  # fallback if ffmpeg fails
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -145,7 +145,9 @@ def download_audio(url: str) -> str:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
+        "Если заголовок видео имеет вид 'Artist - Song Title' (или содержит двоеточие), "
+        "аудио-файл будет переименован и получит соответствующие метаданные."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -158,7 +160,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if update.message.chat.type == "private":
             await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
         return
-    await update.message.reply_text("Скачиваю видео, подождите немного...")
+    # Send a progress message and store it
+    progress_msg = await update.message.reply_text("Скачиваю видео, подождите немного...")
     try:
         filename = download_video(url)
         with open(filename, 'rb') as video:
@@ -169,6 +172,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "Произошла ошибка при скачивании видео. Проверьте правильность ссылки и доступность видео."
         )
+    # Delete the progress message (only in private chat)
+    if update.message.chat.type == "private":
+        await progress_msg.delete()
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Use argument if provided; otherwise, attempt to extract URL from message.
@@ -179,7 +185,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not url or not url.startswith("http"):
         await update.message.reply_text("Пожалуйста, отправьте корректную ссылку после команды /mp3.")
         return
-    await update.message.reply_text("Скачиваю аудио, подождите немного...")
+    progress_msg = await update.message.reply_text("Скачиваю аудио, подождите немного...")
     try:
         filename = download_audio(url)
         with open(filename, 'rb') as audio_file:
@@ -190,6 +196,8 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "Произошла ошибка при скачивании аудио. Проверьте правильность ссылки и доступность видео."
         )
+    if update.message.chat.type == "private":
+        await progress_msg.delete()
 
 def main() -> None:
     # Start Flask server in a separate thread for uptime monitoring
