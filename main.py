@@ -64,9 +64,7 @@ def parse_title(full_title: str):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
-        "Если заголовок видео имеет вид 'Artist - Song Title' (or uses a colon), "
-        "то аудио-файл будет переименован, а метаданные установят название и исполнителя."
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
     )
 
 def download_video(url: str) -> str:
