@@ -135,7 +135,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback if ffmpeg fails
+        new_filename = mp3_temp  # fallback
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -160,7 +160,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if update.message.chat.type == "private":
             await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
         return
-    # Send a progress message and store it
     progress_msg = await update.message.reply_text("Скачиваю видео, подождите немного...")
     try:
         filename = download_video(url)
@@ -172,9 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "Произошла ошибка при скачивании видео. Проверьте правильность ссылки и доступность видео."
         )
-    # Delete the progress message (only in private chat)
-    if update.message.chat.type == "private":
-        await progress_msg.delete()
+    await progress_msg.delete()  # Delete progress message in all chats
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Use argument if provided; otherwise, attempt to extract URL from message.
@@ -196,8 +193,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "Произошла ошибка при скачивании аудио. Проверьте правильность ссылки и доступность видео."
         )
-    if update.message.chat.type == "private":
-        await progress_msg.delete()
+    await progress_msg.delete()  # Delete progress message in all chats
 
 def main() -> None:
     # Start Flask server in a separate thread for uptime monitoring
