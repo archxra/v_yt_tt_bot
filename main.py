@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import threading
 import subprocess
@@ -37,9 +38,18 @@ def run_flask():
 
 # ------------------ Utility Functions ------------------
 
+def extract_url(text: str) -> str:
+    """
+    Extracts the first http(s) URL from the provided text.
+    """
+    match = re.search(r'(https?://\S+)', text)
+    if match:
+        return match.group(1)
+    return None
+
 def parse_title(full_title: str):
     """
-    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
+    Searches for common delimiters (hyphen variants and colon) in the title.
     If found, splits the title into artist and song title.
     Otherwise, returns (None, full_title).
     """
@@ -59,13 +69,7 @@ def parse_title(full_title: str):
     else:
         return None, full_title
 
-# ------------------ Telegram Bot Handlers ------------------
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
-    )
+# ------------------ Download Functions ------------------
 
 def download_video(url: str) -> str:
     ydl_opts = {
@@ -73,7 +77,7 @@ def download_video(url: str) -> str:
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        'cookiefile': 'cookies.txt',  # Path to your cookies file
+        'cookiefile': 'cookies.txt',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
@@ -88,11 +92,11 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     """
     Downloads the audio as an MP3 using yt_dlp.
-    Then, it uses ffmpeg to re-mux the file and embed metadata.
-    It attempts to parse the video's title to split it into artist and song title.
-    The final file is renamed to the full title (sanitized).
+    Then, uses ffmpeg to re-mux the file and embed metadata.
+    It extracts the video's title, attempts to split it into artist and song title,
+    and renames the final file to a sanitized version of the full title.
     """
-    # Base options for yt_dlp extraction and conversion (without custom ffmpeg args)
+    # Base options for yt_dlp extraction and conversion
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
@@ -107,14 +111,14 @@ def download_audio(url: str) -> str:
         }],
     }
     
-    # Download audio
+    # Download audio first
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         temp_filename = ydl.prepare_filename(info_dict)
         base, _ = os.path.splitext(temp_filename)
         mp3_temp = base + ".mp3"
     
-    # Get full title and parse it for metadata
+    # Extract title and parse metadata
     full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
     if artist is None:
@@ -125,7 +129,7 @@ def download_audio(url: str) -> str:
     sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     new_filename = sanitized_title + ".mp3"
 
-    # Use ffmpeg to embed metadata into the MP3 file
+    # Use ffmpeg to embed metadata
     command = [
         "ffmpeg", "-y", "-i", mp3_temp,
         "-metadata", f"title={song_title}",
@@ -136,16 +140,26 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        # Fallback: if ffmpeg fails, use the original file
-        new_filename = mp3_temp
+        new_filename = mp3_temp  # fallback if ffmpeg fails
     else:
         os.remove(mp3_temp)
     return new_filename
 
+# ------------------ Telegram Bot Handlers ------------------
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Привет! Отправь мне ссылку на видео для MP4, "
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
+        "Если заголовок видео имеет вид 'Artist - Song Title' (or uses a colon), "
+        "аудио-файл будет переименован, а метаданные установят название и исполнителя."
+    )
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Process plain text messages as video download requests (MP4)
-    url = update.message.text.strip()
-    if not url.startswith("http"):
+    # Extract URL from the message text (works for both private and group chats)
+    text = update.message.text
+    url = extract_url(text)
+    if not url:
         await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
         return
     await update.message.reply_text("Скачиваю видео, подождите немного...")
@@ -161,14 +175,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Process the /mp3 command for audio download (MP3)
-    args = context.args
-    if not args:
-        await update.message.reply_text("Пожалуйста, укажите ссылку после команды /mp3.")
-        return
-    url = args[0]
-    if not url.startswith("http"):
-        await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
+    # Check if command has arguments; if not, try to extract URL from the message text
+    if context.args:
+        url = context.args[0]
+    else:
+        url = extract_url(update.message.text)
+    if not url or not url.startswith("http"):
+        await update.message.reply_text("Пожалуйста, отправьте корректную ссылку после команды /mp3.")
         return
     await update.message.reply_text("Скачиваю аудио, подождите немного...")
     try:
@@ -190,7 +203,7 @@ def main() -> None:
 
     # Configure and run the Telegram bot
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
