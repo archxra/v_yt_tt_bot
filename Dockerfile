@@ -2,7 +2,7 @@
 FROM python:3.12-slim
 
 # Install git and any other needed packages
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
 WORKDIR /app

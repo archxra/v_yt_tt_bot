@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 from flask import Flask
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,8 +37,15 @@ def run_flask():
 # ------------------ Telegram Bot Handlers ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Define a custom keyboard with a button for /mp3
+    keyboard = [
+        ["/mp3"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
-        "Привет! Отправь мне ссылку на видео для MP4, или используйте команду /mp3 <ссылка> для получения аудиоверсии (MP3)."
+        "Привет! Отправь мне ссылку на видео для MP4, "
+        "или нажми кнопку ниже для скачивания аудио (MP3).",
+        reply_markup=reply_markup
     )
 
 def download_video(url: str) -> str:
@@ -75,13 +82,12 @@ def download_audio(url: str) -> str:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
-        # After processing, the output file should have an .mp3 extension.
         base, _ = os.path.splitext(filename)
         new_filename = base + ".mp3"
     return new_filename
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This handler will process text messages that are not commands (assumes video download by default)
+    # Process plain text messages as video download requests
     url = update.message.text.strip()
     if not url.startswith("http"):
         await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
@@ -99,7 +105,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # This handler processes the /mp3 command
+    # Process the /mp3 command for audio download
     args = context.args
     if not args:
         await update.message.reply_text("Пожалуйста, укажите ссылку после команды /mp3.")
