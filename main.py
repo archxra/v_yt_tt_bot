@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,14 +37,14 @@ def run_flask():
 # ------------------ Telegram Bot Handlers ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Define a custom keyboard with a button for /mp3
+    # Create an inline keyboard button that prepopulates the input field with "/mp3 "
     keyboard = [
-        ["/mp3"]
+        [InlineKeyboardButton("Convert to MP3", switch_inline_query_current_chat="/mp3 ")]
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Привет! Отправь мне ссылку на видео для MP4, "
-        "или нажми кнопку ниже для скачивания аудио (MP3).",
+        "Привет! Отправь мне ссылку на видео для MP4, или нажми кнопку ниже для получения аудио (MP3).\n"
+        "После нажатия кнопки в поле ввода появится команда '/mp3 '. Вставьте ссылку после команды и отправьте.",
         reply_markup=reply_markup
     )
 
@@ -73,6 +73,7 @@ def download_audio(url: str) -> str:
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',  # Path to your cookies file
+        'addmetadata': True,  # Embed metadata (like title and uploader) into the MP3 file
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -82,6 +83,7 @@ def download_audio(url: str) -> str:
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
+        # Change the extension to .mp3 after postprocessing
         base, _ = os.path.splitext(filename)
         new_filename = base + ".mp3"
     return new_filename
@@ -127,7 +129,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 def main() -> None:
-    # Start Flask server in a separate thread
+    # Start Flask server in a separate thread for uptime monitoring
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
