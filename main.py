@@ -2,7 +2,7 @@ import os
 import logging
 import threading
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -37,15 +37,10 @@ def run_flask():
 # ------------------ Telegram Bot Handlers ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Create an inline keyboard button that prepopulates the input field with "/mp3 "
-    keyboard = [
-        [InlineKeyboardButton("Convert to MP3", switch_inline_query_current_chat="/mp3 ")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Привет! Отправь мне ссылку на видео для MP4, или нажми кнопку ниже для получения аудио (MP3).\n"
-        "После нажатия кнопки в поле ввода появится команда '/mp3 '. Вставьте ссылку после команды и отправьте.",
-        reply_markup=reply_markup
+        "Привет! Отправь мне ссылку на видео для MP4, "
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
+        "Имя MP3-файла будет соответствовать заголовку видео."
     )
 
 def download_video(url: str) -> str:
@@ -67,13 +62,17 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
+    """
+    Downloads the audio as an MP3 using yt_dlp and renames the output file to the video's title.
+    """
+    # Use a temporary output template based on video id
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',  # Path to your cookies file
-        'addmetadata': True,  # Embed metadata (like title and uploader) into the MP3 file
+        'addmetadata': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -82,14 +81,26 @@ def download_audio(url: str) -> str:
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info_dict)
-        # Change the extension to .mp3 after postprocessing
-        base, _ = os.path.splitext(filename)
-        new_filename = base + ".mp3"
+        # Get the video's title from the info dictionary; fallback to video ID if missing
+        title = info_dict.get("title", info_dict.get("id"))
+        # Sanitize the title for a safe filename (allow letters, digits, spaces, dashes, and underscores)
+        sanitized_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
+        # Determine the temporary filename produced by yt_dlp
+        temp_filename = ydl.prepare_filename(info_dict)
+        base, _ = os.path.splitext(temp_filename)
+        temp_audio_filename = base + ".mp3"
+        # New filename will be the sanitized title with .mp3 extension
+        new_filename = sanitized_title + ".mp3"
+        # If the temporary file exists, rename it to the new filename
+        if os.path.exists(temp_audio_filename):
+            os.rename(temp_audio_filename, new_filename)
+        else:
+            logger.error("Temporary audio file not found.")
+            new_filename = temp_audio_filename  # Fallback
     return new_filename
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Process plain text messages as video download requests
+    # Process plain text messages as video download requests (MP4)
     url = update.message.text.strip()
     if not url.startswith("http"):
         await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
@@ -107,7 +118,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Process the /mp3 command for audio download
+    # Process the /mp3 command for audio download (MP3)
     args = context.args
     if not args:
         await update.message.reply_text("Пожалуйста, укажите ссылку после команды /mp3.")
