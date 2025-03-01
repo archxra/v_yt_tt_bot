@@ -145,9 +145,7 @@ def download_audio(url: str) -> str:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
-        "Если заголовок видео имеет вид 'Artist - Song Title' (или содержит двоеточие), "
-        "аудио-файл будет переименован и получит соответствующие метаданные."
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
