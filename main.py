@@ -49,7 +49,7 @@ def extract_url(text: str) -> str:
 
 def parse_title(full_title: str):
     """
-    Searches for common delimiters (hyphen variants and colon) in the title.
+    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
     If found, splits the title into artist and song title.
     Otherwise, returns (None, full_title).
     """
@@ -96,7 +96,6 @@ def download_audio(url: str) -> str:
     It extracts the video's title, attempts to split it into artist and song title,
     and renames the final file to a sanitized version of the full title.
     """
-    # Base options for yt_dlp extraction and conversion
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
@@ -111,25 +110,21 @@ def download_audio(url: str) -> str:
         }],
     }
     
-    # Download audio first
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         temp_filename = ydl.prepare_filename(info_dict)
         base, _ = os.path.splitext(temp_filename)
         mp3_temp = base + ".mp3"
     
-    # Extract title and parse metadata
     full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
     if artist is None:
         artist = ""
         song_title = full_title
 
-    # Sanitize the full title for a safe filename
     sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     new_filename = sanitized_title + ".mp3"
 
-    # Use ffmpeg to embed metadata
     command = [
         "ffmpeg", "-y", "-i", mp3_temp,
         "-metadata", f"title={song_title}",
@@ -140,7 +135,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback if ffmpeg fails
+        new_filename = mp3_temp  # fallback
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -150,17 +145,18 @@ def download_audio(url: str) -> str:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
-        "Если заголовок видео имеет вид 'Artist - Song Title' (or uses a colon), "
-        "аудио-файл будет переименован, а метаданные установят название и исполнителя."
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Extract URL from the message text (works for both private and group chats)
+    # Extract URL from the message; if none is found, then:
+    # - In private chats, reply with a prompt.
+    # - In group chats, ignore the message.
     text = update.message.text
     url = extract_url(text)
     if not url:
-        await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
+        if update.message.chat.type == "private":
+            await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
         return
     await update.message.reply_text("Скачиваю видео, подождите немного...")
     try:
@@ -175,7 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Check if command has arguments; if not, try to extract URL from the message text
+    # Use argument if provided; otherwise, attempt to extract URL from message.
     if context.args:
         url = context.args[0]
     else:
