@@ -80,7 +80,7 @@ def download_video(url: str) -> str:
         'cookiefile': 'cookies.txt',
     }
     # If URL is from Pinterest, download video+audio and merge them
-    if 'pinterest' in url.lower():
+    if 'pin.it' in url.lower():
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
     else:
