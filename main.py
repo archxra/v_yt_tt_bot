@@ -39,8 +39,7 @@ def run_flask():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3).\n"
-        "Имя MP3-файла будет соответствовать заголовку видео."
+        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
     )
 
 def download_video(url: str) -> str:
