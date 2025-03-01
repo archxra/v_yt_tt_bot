@@ -34,6 +34,30 @@ def run_flask():
     # Run the Flask server on port 8080
     app.run(host='0.0.0.0', port=8080)
 
+# ------------------ Utility Functions ------------------
+
+def parse_title(full_title: str):
+    """
+    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
+    If found, splits the title into artist and song title.
+    If not, returns None for artist and the full title as song_title.
+    """
+    delimiters = ['-', '–', '—', ':']
+    index = None
+    chosen_delim = None
+    for delim in delimiters:
+        idx = full_title.find(delim)
+        if idx != -1:
+            if index is None or idx < index:
+                index = idx
+                chosen_delim = delim
+    if index is not None:
+        artist = full_title[:index].strip()
+        song_title = full_title[index + len(chosen_delim):].strip()
+        return artist, song_title
+    else:
+        return None, full_title
+
 # ------------------ Telegram Bot Handlers ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,40 +86,59 @@ def download_video(url: str) -> str:
 
 def download_audio(url: str) -> str:
     """
-    Downloads the audio as an MP3 using yt_dlp and renames the output file to the video's title.
+    Downloads the audio as an MP3 using yt_dlp.
+    It extracts the video's title and attempts to split it using common delimiters.
+    If a delimiter is found, the left part becomes the artist and the right part the song title.
+    If not, the entire title is used as the song title and artist remains empty.
+    The FFmpeg postprocessor embeds the metadata accordingly, and the output file is renamed.
     """
-    # Use a temporary output template based on video id
+    # Base options for yt_dlp extraction and conversion
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        'cookiefile': 'cookies.txt',  # Path to your cookies file
+        'cookiefile': 'cookies.txt',
         'addmetadata': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
+            'postprocessor_args': [],  # We'll set these below based on metadata
         }],
     }
+    
+    # First, extract info without downloading
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+    
+    full_title = info_dict.get("title", info_dict.get("id"))
+    artist, song_title = parse_title(full_title)
+    if artist is None:
+        # No delimiter found; leave the title as-is and artist empty
+        artist = ""
+        song_title = full_title
+
+    # Update postprocessor_args with metadata for ffmpeg
+    ydl_opts["postprocessors"][0]["postprocessor_args"] = [
+        '-metadata', f'title={song_title}',
+        '-metadata', f'artist={artist}',
+    ]
+    
+    # Download the audio with updated options
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
-        # Get the video's title from the info dictionary; fallback to video ID if missing
-        title = info_dict.get("title", info_dict.get("id"))
-        # Sanitize the title for a safe filename (allow letters, digits, spaces, dashes, and underscores)
-        sanitized_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
-        # Determine the temporary filename produced by yt_dlp
         temp_filename = ydl.prepare_filename(info_dict)
         base, _ = os.path.splitext(temp_filename)
         temp_audio_filename = base + ".mp3"
-        # New filename will be the sanitized title with .mp3 extension
+        # Sanitize the full title for a safe filename
+        sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
         new_filename = sanitized_title + ".mp3"
-        # If the temporary file exists, rename it to the new filename
         if os.path.exists(temp_audio_filename):
             os.rename(temp_audio_filename, new_filename)
         else:
             logger.error("Temporary audio file not found.")
-            new_filename = temp_audio_filename  # Fallback
+            new_filename = temp_audio_filename  # fallback
     return new_filename
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
