@@ -72,13 +72,20 @@ def parse_title(full_title: str):
 # ------------------ Download Functions ------------------
 
 def download_video(url: str) -> str:
+    # Set base options
     ydl_opts = {
-        'format': 'mp4',
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
+    # If URL is from Pinterest, download video+audio and merge them
+    if 'pinterest' in url.lower():
+        ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts['merge_output_format'] = 'mp4'
+    else:
+        ydl_opts['format'] = 'mp4'
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
@@ -135,7 +142,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback
+        new_filename = mp3_temp  # fallback if ffmpeg fails
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -149,9 +156,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Extract URL from the message; if none is found, then:
-    # - In private chats, reply with a prompt.
-    # - In group chats, ignore the message.
+    # Extract URL from the message text
     text = update.message.text
     url = extract_url(text)
     if not url:
@@ -169,10 +174,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "Произошла ошибка при скачивании видео. Проверьте правильность ссылки и доступность видео."
         )
-    await progress_msg.delete()  # Delete progress message in all chats
+    await progress_msg.delete()
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Use argument if provided; otherwise, attempt to extract URL from message.
+    # Use argument if provided; otherwise, extract URL from the message text.
     if context.args:
         url = context.args[0]
     else:
@@ -191,7 +196,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             "Произошла ошибка при скачивании аудио. Проверьте правильность ссылки и доступность видео."
         )
-    await progress_msg.delete()  # Delete progress message in all chats
+    await progress_msg.delete()
 
 def main() -> None:
     # Start Flask server in a separate thread for uptime monitoring
