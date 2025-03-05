@@ -40,12 +40,16 @@ def run_flask():
 
 def extract_url(text: str) -> str:
     """
-    Extracts the first http(s) URL from the provided text.
+    Extracts the first http(s) link from the text and checks whether it belongs
+    to supported platforms (YouTube, TikTok, Pinterest).
     """
     match = re.search(r'(https?://\S+)', text)
     if match:
-        return match.group(1)
+        url = match.group(1)
+        if any(domain in url.lower() for domain in ["youtube.com", "youtu.be", "tiktok.com", "pin.it", "pinterest.com"]):
+            return url
     return None
+
 
 def parse_title(full_title: str):
     """
