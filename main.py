@@ -1,9 +1,8 @@
 import os
 import re
 import logging
-import threading
 import subprocess
-from flask import Flask
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -22,9 +21,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'  # Replace with your actual token
+TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'  # Замените на ваш токен
 
-# ------------------ Flask Server for Pinging ------------------
+# ------------------ Flask App ------------------
 
 app = Flask(__name__)
 
@@ -32,16 +31,18 @@ app = Flask(__name__)
 def home():
     return "I'm alive!"
 
-def run_flask():
-    # Run the Flask server on port 8080
-    app.run(host='0.0.0.0', port=8080)
+@app.route('/webhook', methods=['POST'])
+def webhook_handler():
+    json_data = request.get_json(force=True)
+    update = Update.de_json(json_data, application.bot)
+    application.process_update(update)
+    return "OK", 200
 
 # ------------------ Utility Functions ------------------
 
 def extract_url(text: str) -> str:
     """
-    Extracts the first http(s) link from the text and checks whether it belongs
-    to supported platforms (YouTube, TikTok, Pinterest).
+    Извлекает первую http(s) ссылку из текста и проверяет, что она принадлежит поддерживаемым платформам.
     """
     match = re.search(r'(https?://\S+)', text)
     if match:
@@ -50,12 +51,11 @@ def extract_url(text: str) -> str:
             return url
     return None
 
-
 def parse_title(full_title: str):
     """
-    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
-    If found, splits the title into artist and song title.
-    Otherwise, returns (None, full_title).
+    Ищет в заголовке видео распространённые разделители (тире, en-dash, em-dash, двоеточие).
+    Если найден, разделяет заголовок на исполнителя и название трека.
+    Иначе возвращает (None, full_title).
     """
     delimiters = ['-', '–', '—', ':']
     index = None
@@ -76,14 +76,13 @@ def parse_title(full_title: str):
 # ------------------ Download Functions ------------------
 
 def download_video(url: str) -> str:
-    # Set base options
     ydl_opts = {
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
-    # If URL is from Pinterest, download video+audio and merge them
+    # Если ссылка с Pinterest, скачиваем видео и аудио, объединяя их
     if 'pin.it' in url.lower():
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
@@ -101,12 +100,6 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
-    """
-    Downloads the audio as an MP3 using yt_dlp.
-    Then, uses ffmpeg to re-mux the file and embed metadata.
-    It extracts the video's title, attempts to split it into artist and song title,
-    and renames the final file to a sanitized version of the full title.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
@@ -146,7 +139,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback if ffmpeg fails
+        new_filename = mp3_temp  # fallback, если ffmpeg не сработал
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -155,67 +148,78 @@ def download_audio(url: str) -> str:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "Привет! Отправь мне ссылку на видео для MP4, "
-        "или используй команду /mp3 <ссылка> для получения аудио (MP3)."
+        "Hallo! Senden Sie mir einen Videolink für MP4 oder verwenden Sie den Befehl /mp3 <link>, um Audio (MP3) zu erhalten.\n"
+        "Links von YouTube, TikTok und Pinterest werden unterstützt."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Extract URL from the message text
     text = update.message.text
     url = extract_url(text)
     if not url:
         if update.message.chat.type == "private":
-            await update.message.reply_text("Пожалуйста, отправьте корректную ссылку.")
+            await update.message.reply_text("Bitte senden Sie einen gültigen Link (YouTube, Tik Tok, Pinterest werden unterstützt).")
         return
-    progress_msg = await update.message.reply_text("Скачиваю видео, подождите немного...")
+    progress_msg = await update.message.reply_text("Ich lade das Video herunter, warte eine Weile...")
     try:
         filename = download_video(url)
         with open(filename, 'rb') as video:
             await update.message.reply_video(video=video)
         os.remove(filename)
     except Exception as e:
-        logger.error(f"Ошибка при скачивании видео: {e}")
-        await update.message.reply_text(
-            "Произошла ошибка при скачивании видео. Проверьте правильность ссылки и доступность видео."
-        )
+        logger.error(f"Fehler beim Herunterladen von Videos: {e}")
+        await update.message.reply_text("Fehler beim Herunterladen des Videos. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
     await progress_msg.delete()
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Use argument if provided; otherwise, extract URL from the message text.
     if context.args:
         url = context.args[0]
     else:
         url = extract_url(update.message.text)
     if not url or not url.startswith("http"):
-        await update.message.reply_text("Пожалуйста, отправьте корректную ссылку после команды /mp3.")
+        await update.message.reply_text("Bitte senden Sie den korrekten Link nach dem Befehl /mp3.")
         return
-    progress_msg = await update.message.reply_text("Скачиваю аудио, подождите немного...")
+    progress_msg = await update.message.reply_text("Ich lade Audio herunter, warte eine Weile...")
     try:
         filename = download_audio(url)
         with open(filename, 'rb') as audio_file:
             await update.message.reply_audio(audio=audio_file)
         os.remove(filename)
     except Exception as e:
-        logger.error(f"Ошибка при скачивании аудио: {e}")
-        await update.message.reply_text(
-            "Произошла ошибка при скачивании аудио. Проверьте правильность ссылки и доступность видео."
-        )
+        logger.error(f"Fehler beim Herunterladen von Audio: {e}")
+        await update.message.reply_text("Fehler beim Herunterladen von Audio. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
     await progress_msg.delete()
 
-def main() -> None:
-    # Start Flask server in a separate thread for uptime monitoring
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
+async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает сообщения, содержащие ровно слово "пинг" (без других слов) в групповых чатах.
+    """
+    if update.message.text.strip().lower() == "пинг":
+        await update.message.reply_text("Der Bot funktioniert erfolgreich!!")
 
-    # Configure and run the Telegram bot
+# ------------------ Main Function ------------------
+
+def main() -> None:
+    global application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    logger.info("Бот запущен...")
-    application.run_polling()
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT 
+            & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
+            & filters.Regex(r'^(?i:пинг)$'),
+            ping_handler
+        )
+    )
+    
+    # Устанавливаем вебхук. Убедитесь, что переменная окружения WEBHOOK_URL содержит ваш публичный URL, оканчивающийся на /webhook.
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
+    application.bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook установлен на: " + WEBHOOK_URL)
+    
+    # Запускаем Flask-приложение (вебхук-обработчик)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 if __name__ == '__main__':
     main()
