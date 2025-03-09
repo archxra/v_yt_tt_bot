@@ -95,7 +95,7 @@ def download_video(url: str) -> str:
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
-    # Если ссылка с Pinterest, скачиваем видео+аудио и объединяем их
+    # Если ссылка с Pinterest, скачиваем видео и аудио, объединяя их
     if 'pin.it' in url.lower():
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
@@ -174,7 +174,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     progress_msg = await update.message.reply_text("Ich lade das Video herunter, warte eine Weile...")
     try:
-        filename = download_video(url)
+        # Запускаем синхронную функцию в пуле потоков
+        filename = await asyncio.to_thread(download_video, url)
         with open(filename, 'rb') as video:
             await update.message.reply_video(video=video)
         os.remove(filename)
@@ -190,49 +191,4 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         url = extract_url(update.message.text)
     if not url or not url.startswith("http"):
         await update.message.reply_text("Bitte senden Sie einen gültigen Link nach dem Befehl /mp3.")
-        return
-    progress_msg = await update.message.reply_text("Ich lade das Audio herunter, warte eine Weile...")
-    try:
-        filename = download_audio(url)
-        with open(filename, 'rb') as audio_file:
-            await update.message.reply_audio(audio=audio_file)
-        os.remove(filename)
-    except Exception as e:
-        logger.error(f"Fehler beim Herunterladen von Audio: {e}")
-        await update.message.reply_text("Fehler beim Herunterladen des Audios. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
-    await progress_msg.delete()
-
-async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message.text.strip().lower() == "пинг":
-        await update.message.reply_text("Понг!")
-
-# ------------------ Main Function ------------------
-
-def main() -> None:
-    global application, app_loop
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("mp3", mp3_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT 
-            & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP)
-            & filters.Regex(r'^(?i:пинг)$'),
-            ping_handler
-        )
-    )
     
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
-    
-    # Создаем глобальный event loop и инициализируем приложение
-    app_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(app_loop)
-    app_loop.run_until_complete(application.initialize())
-    app_loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
-    logger.info("Webhook установлен на: " + WEBHOOK_URL)
-    
-    run_flask()
-
-if __name__ == '__main__':
-    main()
