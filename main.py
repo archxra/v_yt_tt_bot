@@ -32,20 +32,24 @@ app = Flask(__name__)
 def home():
     return "I'm alive!"
 
+# Глобальный event loop для обработки обновлений
+app_loop = None
+
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     json_data = request.get_json(force=True)
     update = Update.de_json(json_data, application.bot)
-    # Создаем новый цикл событий и запускаем обработку обновления
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(application.process_update(update))
-    loop.close()
+    # Запускаем обработку обновления в глобальном цикле событий
+    future = asyncio.run_coroutine_threadsafe(application.process_update(update), app_loop)
+    try:
+        future.result()  # Ждем завершения обработки
+    except Exception as e:
+        logger.error(f"Ошибка при обработке update: {e}")
     return "OK", 200
 
 def run_flask():
-    # Запускаем Flask-приложение на порту, указанном в переменной окружения PORT (или 8080 по умолчанию)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 # ------------------ Utility Functions ------------------
 
@@ -91,7 +95,7 @@ def download_video(url: str) -> str:
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
-    # Если ссылка с Pinterest, скачиваем видео и аудио, объединяя их
+    # Если ссылка с Pinterest, скачиваем видео+аудио и объединяем их
     if 'pin.it' in url.lower():
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
@@ -205,7 +209,7 @@ async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # ------------------ Main Function ------------------
 
 def main() -> None:
-    global application
+    global application, app_loop
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
@@ -220,14 +224,12 @@ def main() -> None:
     )
     
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
-    # Используем отдельную функцию для установки вебхука без asyncio.run() в main()
-    def set_webhook_sync():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
-        loop.close()
     
-    set_webhook_sync()
+    # Создаем глобальный event loop и инициализируем приложение
+    app_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(app_loop)
+    app_loop.run_until_complete(application.initialize())
+    app_loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
     logger.info("Webhook установлен на: " + WEBHOOK_URL)
     
     run_flask()
