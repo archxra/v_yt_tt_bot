@@ -38,11 +38,11 @@ app_loop = None
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
     json_data = request.get_json(force=True)
+    logger.info(f"Webhook update received: {json_data}")
     update = Update.de_json(json_data, application.bot)
-    # Запускаем обработку обновления в глобальном цикле событий
     future = asyncio.run_coroutine_threadsafe(application.process_update(update), app_loop)
     try:
-        future.result()  # Ждем завершения обработки
+        future.result()
     except Exception as e:
         logger.error(f"Ошибка при обработке update: {e}")
     return "OK", 200
