@@ -36,16 +36,23 @@ def home():
 def webhook_handler():
     json_data = request.get_json(force=True)
     update = Update.de_json(json_data, application.bot)
-    # Корректно await’им асинхронную функцию
-    asyncio.run(application.process_update(update))
+    # Создаем новый event loop и запускаем процесс обновления
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.process_update(update))
+    loop.close()
     return "OK", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    # Запускаем Flask-приложение на порту, указанном в переменной окружения PORT (или 8080 по умолчанию)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 # ------------------ Utility Functions ------------------
 
 def extract_url(text: str) -> str:
+    """
+    Извлекает первую http(s) ссылку из текста и проверяет, что она принадлежит поддерживаемым платформам.
+    """
     match = re.search(r'(https?://\S+)', text)
     if match:
         url = match.group(1)
@@ -54,6 +61,11 @@ def extract_url(text: str) -> str:
     return None
 
 def parse_title(full_title: str):
+    """
+    Ищет в заголовке видео распространённые разделители (тире, en-dash, em-dash, двоеточие).
+    Если найден, разделяет заголовок на исполнителя и название трека.
+    Иначе возвращает (None, full_title).
+    """
     delimiters = ['-', '–', '—', ':']
     index = None
     chosen_delim = None
@@ -79,6 +91,7 @@ def download_video(url: str) -> str:
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
+    # Если ссылка с Pinterest, скачиваем видео и аудио, объединяя их
     if 'pin.it' in url.lower():
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['merge_output_format'] = 'mp4'
@@ -135,7 +148,7 @@ def download_audio(url: str) -> str:
     result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
         logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback если ffmpeg не сработал
+        new_filename = mp3_temp  # fallback, если ffmpeg не сработал
     else:
         os.remove(mp3_temp)
     return new_filename
@@ -145,7 +158,7 @@ def download_audio(url: str) -> str:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Hallo! Senden Sie mir einen Videolink für MP4 oder verwenden Sie den Befehl /mp3 <link>, um Audio (MP3) zu erhalten.\n"
-        "Links von YouTube, TikTok und Pinterest werden unterstützt."
+        "Unterstützte Links: YouTube, TikTok und Pinterest."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -153,7 +166,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     url = extract_url(text)
     if not url:
         if update.message.chat.type == "private":
-            await update.message.reply_text("Bitte senden Sie einen gültigen Link (YouTube, TikTok, Pinterest werden unterstützt).")
+            await update.message.reply_text("Bitte senden Sie einen gültigen Link (YouTube, TikTok, Pinterest).")
         return
     progress_msg = await update.message.reply_text("Ich lade das Video herunter, warte eine Weile...")
     try:
@@ -172,9 +185,9 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         url = extract_url(update.message.text)
     if not url or not url.startswith("http"):
-        await update.message.reply_text("Bitte senden Sie den korrekten Link nach dem Befehl /mp3.")
+        await update.message.reply_text("Bitte senden Sie einen gültigen Link nach dem Befehl /mp3.")
         return
-    progress_msg = await update.message.reply_text("Ich lade Audio herunter, warte eine Weile...")
+    progress_msg = await update.message.reply_text("Ich lade das Audio herunter, warte eine Weile...")
     try:
         filename = download_audio(url)
         with open(filename, 'rb') as audio_file:
@@ -182,7 +195,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         os.remove(filename)
     except Exception as e:
         logger.error(f"Fehler beim Herunterladen von Audio: {e}")
-        await update.message.reply_text("Fehler beim Herunterladen von Audio. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
+        await update.message.reply_text("Fehler beim Herunterladen des Audios. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
     await progress_msg.delete()
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -194,6 +207,12 @@ async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def main() -> None:
     global application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Инициализируем приложение, чтобы избежать ошибки "not initialized"
+    async def init_app():
+        await application.initialize()
+    asyncio.run(init_app())
+    
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -206,12 +225,11 @@ def main() -> None:
         )
     )
     
-    # Устанавливаем вебхук корректно с использованием asyncio.run()
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
+    # Устанавливаем вебхук и корректно await'им вызов
     asyncio.run(application.bot.set_webhook(WEBHOOK_URL))
     logger.info("Webhook установлен на: " + WEBHOOK_URL)
     
-    # Запускаем Flask-приложение (вебхук-обработчик)
     run_flask()
 
 if __name__ == '__main__':
