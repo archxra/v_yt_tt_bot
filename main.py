@@ -36,7 +36,7 @@ def home():
 def webhook_handler():
     json_data = request.get_json(force=True)
     update = Update.de_json(json_data, application.bot)
-    # Создаем новый event loop и запускаем процесс обновления
+    # Создаем новый цикл событий и запускаем обработку обновления
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(application.process_update(update))
@@ -207,12 +207,6 @@ async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def main() -> None:
     global application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # Инициализируем приложение, чтобы избежать ошибки "not initialized"
-    async def init_app():
-        await application.initialize()
-    asyncio.run(init_app())
-    
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -226,8 +220,14 @@ def main() -> None:
     )
     
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
-    # Устанавливаем вебхук и корректно await'им вызов
-    asyncio.run(application.bot.set_webhook(WEBHOOK_URL))
+    # Используем отдельную функцию для установки вебхука без asyncio.run() в main()
+    def set_webhook_sync():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
+        loop.close()
+    
+    set_webhook_sync()
     logger.info("Webhook установлен на: " + WEBHOOK_URL)
     
     run_flask()
