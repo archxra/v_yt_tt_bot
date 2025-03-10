@@ -165,7 +165,7 @@ def download_audio(url: str) -> str:
     # Пытаемся найти обложку (yt_dlp может скачать её в формате .webp)
     thumbnail_path = None
     webp_thumb = base + ".webp"
-    if os.path.exists(webp_thumb):
+    if os.path.exists(webp_thumb) and os.path.getsize(webp_thumb) > 0:
         jpg_thumb = base + ".jpg"
         os.rename(webp_thumb, jpg_thumb)
         thumbnail_path = jpg_thumb
@@ -177,8 +177,8 @@ def download_audio(url: str) -> str:
     
     mp3_filename = base + ".mp3"
     
-    if thumbnail_path and os.path.exists(thumbnail_path):
-        # Принудительно указываем, что второй вход — изображение JPEG
+    if thumbnail_path and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+        # Команда с обложкой; добавляем опцию -disposition:v attached_pic
         cmd = [
             "ffmpeg", "-y",
             "-i", temp_filename,
@@ -192,6 +192,7 @@ def download_audio(url: str) -> str:
             "-metadata:s:v", 'title="Album cover"',
             "-metadata:s:v", 'comment="Cover (front)"',
             "-metadata:s:v", 'mimetype=image/jpeg',
+            "-disposition:v", "attached_pic",
             "-loglevel", "error",
             mp3_filename
         ]
