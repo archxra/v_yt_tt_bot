@@ -165,6 +165,10 @@ def download_audio(url: str) -> str:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info_dict)
+            
+            if not os.path.exists(filename):
+                raise FileNotFoundError(f"Downloaded file {filename} not found")
+            
             base, _ = os.path.splitext(filename)
             
             # Обработка обложки
@@ -188,26 +192,37 @@ def download_audio(url: str) -> str:
                 '-i', filename,
                 '-metadata', f'title={song_title}',
                 '-metadata', f'artist={artist}',
-                '-c', 'copy',
+                '-c:a', 'copy',
                 '-id3v2_version', '3',
+                '-loglevel', 'error',
                 mp3_filename
             ]
             
             if thumbnail:
-                cmd += ['-i', thumbnail, '-map', '0:0', '-map', '1:0',
-                        '-metadata:s:v', 'title="Album cover"',
-                        '-metadata:s:v', 'comment="Cover (front)"']
+                cmd += [
+                    '-i', thumbnail,
+                    '-c:v', 'copy',
+                    '-map', '0:a',
+                    '-map', '1:v',
+                    '-metadata:s:v', 'title="Album cover"',
+                    '-metadata:s:v', 'comment="Cover (front)"'
+                ]
             
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 logger.error(f"FFmpeg error: {result.stderr}")
-                raise RuntimeError("Audio conversion failed")
+                raise RuntimeError(f"Audio conversion failed: {result.stderr}")
             
             return mp3_filename
             
     finally:
-        # Очистка временных файлов
-        temp_files = [filename, thumbnail, base + ".webm", base + ".jpg"]
+        temp_files = [
+            filename, 
+            thumbnail, 
+            base + ".webp",
+            base + ".webm",
+            base + ".jpg"
+        ]
         for f in temp_files:
             if f and os.path.exists(f):
                 try:
@@ -294,18 +309,23 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Загрузка и конвертация
         filename = download_audio(url)
         
+        # Получение метаданных из имени файла
+        base = os.path.splitext(filename)[0]
+        song_title = os.path.basename(base)
+        artist = "Unknown Artist"
+        
         # Отправка аудио
         with open(filename, 'rb') as audio_file:
-            duration = info_dict.get('duration', 0)
-            thumb = open(base + ".jpg", 'rb') if os.path.exists(base + ".jpg") else None
+            thumb_path = base + ".jpg"
+            thumb = open(thumb_path, 'rb') if os.path.exists(thumb_path) else None
             
             await update.message.reply_audio(
                 audio=audio_file,
                 title=song_title,
                 performer=artist,
-                duration=int(duration),
                 thumb=thumb,
-                timeout=30
+                read_timeout=30,
+                write_timeout=30
             )
             
         if thumb:
