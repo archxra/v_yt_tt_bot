@@ -135,9 +135,6 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
-    """
-    Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'temp/%(id)s.%(ext)s',
@@ -166,12 +163,14 @@ def download_audio(url: str) -> str:
         artist = info_dict.get("uploader", "Unknown Artist")
     
     mp3_filename = base + ".mp3"
+    
     cmd = [
         "ffmpeg", "-y",
         "-i", temp_filename,
         "-metadata", f"title={song_title}",
         "-metadata", f"artist={artist}",
-        "-c:a", "copy",
+        "-c:a", "libmp3lame",  # перекодируем аудио в mp3
+        "-b:a", "192k",
         "-id3v2_version", "3",
         "-loglevel", "error",
         mp3_filename
@@ -182,7 +181,6 @@ def download_audio(url: str) -> str:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
-    # Удаляем исходный файл после конвертации
     os.remove(temp_filename)
     return mp3_filename
 
