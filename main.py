@@ -135,11 +135,6 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
-    """
-    Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg с помощью ffmpeg,
-    затем вставляет её в mp3 как attached picture.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'temp/%(id)s.%(ext)s',
@@ -151,6 +146,11 @@ def download_audio(url: str) -> str:
         'socket_timeout': 30,
         'noprogress': True,
         'writethumbnail': True,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -163,68 +163,69 @@ def download_audio(url: str) -> str:
     
     base, _ = os.path.splitext(temp_filename)
     
-    # Проверяем наличие обложки в формате webp и конвертируем её в jpg
-    thumbnail_path = None
-    webp_thumb = base + ".webp"
-    if os.path.exists(webp_thumb) and os.path.getsize(webp_thumb) > 0:
-        jpg_thumb = base + ".jpg"
-        cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
-        result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
-        if result_convert.returncode == 0 and os.path.exists(jpg_thumb) and os.path.getsize(jpg_thumb) > 0:
-            thumbnail_path = jpg_thumb
-        else:
-            logger.error(f"Thumbnail conversion failed: {result_convert.stderr}")
-            thumbnail_path = None
-
-    full_title = info_dict.get("title", info_dict.get("id"))
+    # Извлечение метаданных
+    full_title = info_dict.get("title", "Unknown Title")
     artist, song_title = parse_title(full_title)
     if not artist:
         artist = info_dict.get("uploader", "Unknown Artist")
-    duration = info_dict.get("duration", "")
+    
+    upload_date = info_dict.get('upload_date', '')
+    if upload_date:
+        upload_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+    album = info_dict.get('album', '')
+    duration = info_dict.get('duration', 0)
+    
+    # Обработка обложки
+    thumbnail_path = None
+    webp_thumb = base + ".webp"
+    if os.path.exists(webp_thumb):
+        jpg_thumb = base + ".jpg"
+        cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
+        result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
+        if result_convert.returncode == 0 and os.path.exists(jpg_thumb):
+            thumbnail_path = jpg_thumb
     
     mp3_filename = base + ".mp3"
     
-    # Формируем команду ffmpeg
-    cmd = ["ffmpeg", "-y", "-i", temp_filename]
-    if thumbnail_path and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
-        cmd.extend(["-i", thumbnail_path, "-map", "0:a", "-map", "1:v"])
+    # Сборка команды FFmpeg
+    cmd = [
+        'ffmpeg', '-y',
+        '-i', temp_filename,
+        '-id3v2_version', '3',
+        '-metadata', f'title={song_title}',
+        '-metadata', f'artist={artist}',
+        '-metadata', f'album={album}',
+        '-metadata', f'date={upload_date}',
+        '-metadata', f'TLEN={duration}',
+        '-c:a', 'copy',
+        '-loglevel', 'error',
+    ]
+    
+    if thumbnail_path:
+        cmd += [
+            '-i', thumbnail_path,
+            '-map', '0:a',
+            '-map', '1:v',
+            '-disposition:v', 'attached_pic'
+        ]
     else:
-        cmd.extend(["-map", "0:a"])
+        cmd += ['-map', '0:a']
     
-    cmd.extend([
-        "-c:a", "libmp3lame", "-b:a", "192k",
-        "-id3v2_version", "3",
-        "-metadata", f"title={song_title}",
-        "-metadata", f"artist={artist}"
-    ])
-    if duration:
-        # Duration не всегда поддерживается, но можно попробовать добавить
-        cmd.extend(["-metadata", f"duration={duration}"])
-    if thumbnail_path and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
-        cmd.extend([
-            "-metadata:s:v", 'title="Album cover"',
-            "-metadata:s:v", 'comment="Cover (front)"',
-            "-metadata:s:v", 'mimetype=image/jpeg',
-            "-disposition:v", "attached_pic"
-        ])
-    cmd.extend(["-loglevel", "error", mp3_filename])
+    cmd.append(mp3_filename)
     
-    logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
-    # Удаляем временные файлы
-    try:
-        os.remove(temp_filename)
-    except Exception:
-        pass
-    if thumbnail_path and os.path.exists(thumbnail_path):
-        try:
-            os.remove(thumbnail_path)
-        except Exception:
-            pass
+    # Очистка временных файлов
+    temp_files = [temp_filename, webp_thumb, thumbnail_path]
+    for f in temp_files:
+        if f and os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception as e:
+                logger.warning(f"Failed to delete {f}: {str(e)}")
     
     return mp3_filename
 
