@@ -14,6 +14,11 @@ from telegram.ext import (
 )
 import yt_dlp
 
+# Global variables with thread-safe access
+app_loop = None
+app_loop_lock = threading.Lock()
+application = None
+
 print("Cookies file exists:", os.path.exists("cookies.txt"))
 
 # Setup logging
@@ -37,15 +42,19 @@ app_loop = None
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
-    json_data = request.get_json(force=True)
-    logger.info(f"Webhook update received: {json_data}")
-    update = Update.de_json(json_data, application.bot)
-    future = asyncio.run_coroutine_threadsafe(application.process_update(update), app_loop)
-    try:
-        future.result()
-    except Exception as e:
-        logger.error(f"Ошибка при обработке update: {e}")
-    return "OK", 200
+    # Потокобезопасное получение event loop
+    with app_loop_lock:
+        loop = app_loop
+    
+    if not loop:
+        return "Event loop not initialized", 500
+
+    # Обработка обновления через правильный event loop
+    future = asyncio.run_coroutine_threadsafe(
+        application.process_update(update), 
+        loop
+    )
+    future.result(timeout=10)
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -208,8 +217,16 @@ async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # ------------------ Main Function ------------------
 
-def main() -> None:
-    global application, app_loop
+def run_event_loop():
+    global app_loop, application
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Saving a reference to the event loop
+    with app_loop_lock:
+        app_loop = loop
+
+    # Initializing the bot in the correct thread
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
@@ -223,14 +240,16 @@ def main() -> None:
         )
     )
     
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
+    # Setting up a webhook
+    loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
     
-    # Создаем глобальный event loop и инициализируем приложение
-    app_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(app_loop)
-    app_loop.run_until_complete(application.initialize())
-    app_loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
-    logger.info("Webhook установлен на: " + WEBHOOK_URL)
+    # Infinite processing loop
+    loop.run_forever()
+
+def main() -> None:
+    # Starting a thread with an event loop
+    threading.Thread(target=run_event_loop, daemon=True).start()
+    time.sleep(2)  # Waiting for initialization
     
     run_flask()
 
