@@ -5,6 +5,7 @@ import subprocess
 import asyncio
 import threading
 import time
+from collections import deque
 from typing import Optional
 from flask import Flask, request
 from telegram import Update, Message
@@ -21,6 +22,8 @@ import yt_dlp
 app_loop = None
 app_loop_lock = threading.Lock()
 application = None
+
+processed_updates = deque(maxlen=1000)
 
 print("Cookies file exists:", os.path.exists("cookies.txt"))
 
@@ -57,6 +60,12 @@ def webhook_handler():
             return "Service Unavailable", 503
 
         update = Update.de_json(json_data, application.bot)
+        
+        # Проверка дубликатов
+        if update.update_id in processed_updates:
+            logger.info(f"Ignoring duplicate update: {update.update_id}")
+            return "OK", 200
+        processed_updates.append(update.update_id)
         
         # Безопасное определение типа сообщения
         msg_type = 'no_message'
