@@ -135,6 +135,10 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
+    """
+    Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
+    Если доступна обложка (thumbnail) в формате webp, переименовывает её в jpg и вставляет в mp3.
+    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'temp/%(id)s.%(ext)s',
@@ -155,33 +159,73 @@ def download_audio(url: str) -> str:
     if not os.path.exists(temp_filename):
         raise FileNotFoundError(f"Downloaded file {temp_filename} not found")
     
-    base, _ = os.path.splitext(temp_filename)
+    base, ext = os.path.splitext(temp_filename)
     
+    # Пытаемся найти обложку (yt_dlp может скачать её в формате .webp)
+    thumbnail_path = None
+    webp_thumb = base + ".webp"
+    if os.path.exists(webp_thumb):
+        # Переименовываем в jpg, так как ffmpeg обычно удобнее работает с jpg
+        jpg_thumb = base + ".jpg"
+        os.rename(webp_thumb, jpg_thumb)
+        thumbnail_path = jpg_thumb
+
     full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
     if not artist:
         artist = info_dict.get("uploader", "Unknown Artist")
     
+    # Формируем имя выходного mp3 файла
+    sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     mp3_filename = base + ".mp3"
-    
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", temp_filename,
-        "-metadata", f"title={song_title}",
-        "-metadata", f"artist={artist}",
-        "-c:a", "libmp3lame",  # перекодируем аудио в mp3
-        "-b:a", "192k",
-        "-id3v2_version", "3",
-        "-loglevel", "error",
-        mp3_filename
-    ]
+
+    # Если обложка доступна, добавляем её как второй вход
+    if thumbnail_path and os.path.exists(thumbnail_path):
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", temp_filename,
+            "-i", thumbnail_path,
+            "-map", "0:a",
+            "-map", "1:v",
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            "-c:v", "copy",
+            "-metadata", f"title={song_title}",
+            "-metadata", f"artist={artist}",
+            "-metadata:s:v", 'title="Album cover"',
+            "-metadata:s:v", 'comment="Cover (front)"',
+            "-id3v2_version", "3",
+            "-loglevel", "error",
+            mp3_filename
+        ]
+    else:
+        # Если обложки нет, просто конвертируем аудио
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", temp_filename,
+            "-c:a", "libmp3lame", "-b:a", "192k",
+            "-metadata", f"title={song_title}",
+            "-metadata", f"artist={artist}",
+            "-id3v2_version", "3",
+            "-loglevel", "error",
+            mp3_filename
+        ]
     
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
-    os.remove(temp_filename)
+    # Удаляем временные файлы
+    try:
+        os.remove(temp_filename)
+    except Exception:
+        pass
+    if thumbnail_path and os.path.exists(thumbnail_path):
+        try:
+            os.remove(thumbnail_path)
+        except Exception:
+            pass
+    
     return mp3_filename
 
 # ------------------ Telegram Bot Handlers ------------------
