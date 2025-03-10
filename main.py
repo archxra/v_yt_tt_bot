@@ -137,7 +137,8 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     """
     Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg и вставляет в mp3.
+    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg, затем принудительно
+    интерпретирует как JPEG и вставляет в mp3.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -154,6 +155,7 @@ def download_audio(url: str) -> str:
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
+        logger.info(f"Extracted metadata: {info_dict.get('title')}, uploader: {info_dict.get('uploader')}, duration: {info_dict.get('duration')}")
         temp_filename = ydl.prepare_filename(info_dict)
     
     if not os.path.exists(temp_filename):
@@ -161,12 +163,12 @@ def download_audio(url: str) -> str:
     
     base, _ = os.path.splitext(temp_filename)
     
-    # Проверяем наличие обложки в формате webp
+    # Проверяем наличие обложки (WebP)
     thumbnail_path = None
     webp_thumb = base + ".webp"
     if os.path.exists(webp_thumb) and os.path.getsize(webp_thumb) > 0:
-        # Конвертируем webp в jpg с помощью ffmpeg
         jpg_thumb = base + ".jpg"
+        # Конвертация webp -> jpg с помощью ffmpeg
         cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
         result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
         if result_convert.returncode == 0 and os.path.exists(jpg_thumb):
@@ -179,6 +181,8 @@ def download_audio(url: str) -> str:
     artist, song_title = parse_title(full_title)
     if not artist:
         artist = info_dict.get("uploader", "Unknown Artist")
+    # Если длительность есть, можно попробовать передать её (но обычно проигрыватели вычисляют её автоматически)
+    duration = info_dict.get("duration", "")
     
     mp3_filename = base + ".mp3"
     
@@ -193,6 +197,8 @@ def download_audio(url: str) -> str:
             "-id3v2_version", "3",
             "-metadata", f"title={song_title}",
             "-metadata", f"artist={artist}",
+            # Можно добавить длительность, если требуется (но не все проигрыватели её используют)
+            "-metadata", f"duration={duration}",
             "-metadata:s:v", 'title="Album cover"',
             "-metadata:s:v", 'comment="Cover (front)"',
             "-metadata:s:v", 'mimetype=image/jpeg',
@@ -205,9 +211,10 @@ def download_audio(url: str) -> str:
             "ffmpeg", "-y",
             "-i", temp_filename,
             "-c:a", "libmp3lame", "-b:a", "192k",
+            "-id3v2_version", "3",
             "-metadata", f"title={song_title}",
             "-metadata", f"artist={artist}",
-            "-id3v2_version", "3",
+            "-metadata", f"duration={duration}",
             "-loglevel", "error",
             mp3_filename
         ]
@@ -217,7 +224,6 @@ def download_audio(url: str) -> str:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
-    # Удаляем временные файлы
     try:
         os.remove(temp_filename)
     except Exception:
