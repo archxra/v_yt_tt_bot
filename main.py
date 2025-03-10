@@ -176,8 +176,9 @@ def download_audio(url: str) -> str:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info_dict)
+            filename = os.path.abspath(ydl.prepare_filename(info_dict))
             
+            time.sleep(2)  # 2 секунды задержки
             if not os.path.exists(filename):
                 raise FileNotFoundError(f"Downloaded file {filename} not found")
             
