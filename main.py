@@ -170,6 +170,7 @@ def download_audio(url: str) -> str:
         }],
     }
     
+    thumbnail = None  # Инициализация переменной
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
@@ -181,12 +182,10 @@ def download_audio(url: str) -> str:
             base, _ = os.path.splitext(filename)
             
             # Обработка обложки
-            thumbnail = base + ".webp"
-            if os.path.exists(thumbnail):
-                os.rename(thumbnail, base + ".jpg")
+            thumbnail_path = base + ".webp"
+            if os.path.exists(thumbnail_path):
+                os.rename(thumbnail_path, base + ".jpg")
                 thumbnail = base + ".jpg"
-            else:
-                thumbnail = None
             
             # Парсинг метаданных
             full_title = info_dict.get('title', 'Unknown Title')
@@ -227,7 +226,7 @@ def download_audio(url: str) -> str:
     finally:
         temp_files = [
             filename, 
-            thumbnail, 
+            thumbnail,  # Теперь переменная всегда определена
             base + ".webp",
             base + ".webm",
             base + ".jpg"
