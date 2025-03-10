@@ -44,24 +44,31 @@ app_loop = None
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
-    json_data = request.get_json(force=True)
-    
-    with app_loop_lock:
-        loop = app_loop
-    
-    if not loop:
-        return "Event loop not ready", 500
-
     try:
+        json_data = request.get_json(force=True)
+        logger.debug(f"Raw update: {json_data}")  # Логирование сырых данных
+
+        with app_loop_lock:
+            loop = app_loop
+        
+        if not loop or not application:
+            logger.critical("Event loop or application not initialized")
+            return "Service Unavailable", 503
+
         update = Update.de_json(json_data, application.bot)
+        
+        # Логирование типа обновления
+        logger.info(f"Processing update: {update.update_id} [type: {update.effective_message.content_type if update.effective_message else 'no message'}]")
+        
         future = asyncio.run_coroutine_threadsafe(
             application.process_update(update),
             loop
         )
-        future.result(timeout=15)
+        future.result(timeout=20)
+
     except Exception as e:
-        logger.error(f"Processing error: {str(e)}")
-        return "Internal error", 500
+        logger.error(f"Fatal webhook error: {str(e)}", exc_info=True)
+        return "Internal Server Error", 500
     
     return "OK", 200
 
@@ -221,23 +228,72 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await progress_msg.delete()
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context.args:
-        url = context.args[0]
-    else:
-        url = extract_url(update.message.text)
-    if not url or not url.startswith("http"):
-        await update.message.reply_text("Bitte senden Sie einen gültigen Link nach dem Befehl /mp3.")
-        return
-    progress_msg = await update.message.reply_text("Ich lade das Audio herunter, warte eine Weile...")
+    progress_msg = None
     try:
+        # Проверка наличия сообщения
+        if not update.message or not update.message.text:
+            logger.error("Получена команда /mp3 без сообщения")
+            return
+
+        # Извлечение URL
+        url = None
+        if context.args:
+            # Объединение аргументов для URL с пробелами
+            potential_url = " ".join(context.args)
+            if extract_url(potential_url):
+                url = potential_url
+        else:
+            url = extract_url(update.message.text)
+
+        # Вторичная проверка через прямое извлечение
+        if not url:
+            url = extract_url(update.message.text)
+
+        # Валидация URL
+        if not url or not url.startswith(("http://", "https://")):
+            logger.warning(f"Ungültige URL: {url}")
+            await update.message.reply_text("❌ Ungültiger Link. Beispiel für das richtige Format:\n/mp3 https://youtu.be/...")
+            return
+
+        # Начало загрузки
+        progress_msg = await update.message.reply_text("⏳ Ich beginne mit der Audioverarbeitung...")
+        
+        # Загрузка и конвертация
         filename = download_audio(url)
+        
+        # Отправка аудио
         with open(filename, 'rb') as audio_file:
-            await update.message.reply_audio(audio=audio_file)
+            await update.message.reply_audio(
+                audio=audio_file,
+                title=os.path.splitext(os.path.basename(filename))[0],
+                performer="YouTube Converter"
+            )
+        
+        # Финализация
         os.remove(filename)
+        await progress_msg.delete()
+
+    except yt_dlp.DownloadError as e:
+        error_msg = f"Ошибка загрузки: {str(e)}"
+        logger.error(error_msg)
+        await handle_error(update, progress_msg, "🚫 Fehler beim Herunterladen des Videos. Überprüfen Sie:\n- Verfügbarkeit des Videos\n- Altersbeschränkungen\n- Korrektheit des Links")
+    
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr.decode()}")
+        await handle_error(update, progress_msg, "⚠️ Audio-Konvertierung ist fehlgeschlagen. Versuchen Sie es später")
+    
     except Exception as e:
-        logger.error(f"Fehler beim Herunterladen von Audio: {e}")
-        await update.message.reply_text("Fehler beim Herunterladen des Audios. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
-    await progress_msg.delete()
+        logger.error(f"Critical MP3 error: {str(e)}", exc_info=True)
+        await handle_error(update, progress_msg, "‼️ Interner Serverfehler")
+
+async def handle_error(update: Update, progress_msg: Message, text: str):
+    """Унифицированная обработка ошибок"""
+    try:
+        if progress_msg:
+            await progress_msg.delete()
+        await update.message.reply_text(text)
+    except Exception as e:
+        logger.error(f"Error handling failed: {str(e)}")
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.text.strip().lower() == "пинг":
