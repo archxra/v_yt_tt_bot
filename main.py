@@ -184,22 +184,41 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Проверка наличия текстового сообщения
+    if not update.message or not update.message.text:
+        logger.warning("Empty message received: %s", update)
+        return
+
     text = update.message.text
     url = extract_url(text)
+    
     if not url:
         if update.message.chat.type == "private":
             await update.message.reply_text("Bitte senden Sie einen gültigen Link (YouTube, TikTok, Pinterest).")
         return
-    progress_msg = await update.message.reply_text("Ich lade das Video herunter, warte eine Weile...")
+        
     try:
+        progress_msg = await update.message.reply_text("Ich lade das Video herunter, warte eine Weile...")
         filename = download_video(url)
+        
         with open(filename, 'rb') as video:
             await update.message.reply_video(video=video)
+            
         os.remove(filename)
+        
+    except yt_dlp.DownloadError as e:
+        logger.error(f"Download error: {str(e)}")
+        await update.message.reply_text("⚠️ Video konnte nicht heruntergeladen werden. Mögliche Ursachen:\n"
+                                      "- Altersbeschränkung\n"
+                                      "- Geoblocking\n"
+                                      "- Ungültiger Link")
     except Exception as e:
-        logger.error(f"Fehler beim Herunterladen von Videos: {e}")
-        await update.message.reply_text("Fehler beim Herunterladen des Videos. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
-    await progress_msg.delete()
+        logger.exception("Critical error in video download")
+        await update.message.reply_text("❌ Schwerer Fehler bei der Verarbeitung")
+        
+    finally:
+        if progress_msg:
+            await progress_msg.delete()
 
 async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
@@ -222,7 +241,7 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.text.strip().lower() == "пинг":
-        await update.message.reply_text("Понг!")
+        await update.message.reply_text("Der Bot funktioniert erfolgreich!!")
 
 # ------------------ Main Function ------------------
 
