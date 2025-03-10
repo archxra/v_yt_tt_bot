@@ -137,8 +137,7 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     """
     Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, переименовывает её в jpg, затем принудительно
-    интерпретирует как JPEG и вставляет в mp3.
+    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg и вставляет в mp3.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -162,13 +161,19 @@ def download_audio(url: str) -> str:
     
     base, _ = os.path.splitext(temp_filename)
     
-    # Пытаемся найти обложку (yt_dlp может скачать её в формате .webp)
+    # Проверяем наличие обложки в формате webp
     thumbnail_path = None
     webp_thumb = base + ".webp"
     if os.path.exists(webp_thumb) and os.path.getsize(webp_thumb) > 0:
+        # Конвертируем webp в jpg с помощью ffmpeg
         jpg_thumb = base + ".jpg"
-        os.rename(webp_thumb, jpg_thumb)
-        thumbnail_path = jpg_thumb
+        cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
+        result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
+        if result_convert.returncode == 0 and os.path.exists(jpg_thumb):
+            thumbnail_path = jpg_thumb
+        else:
+            logger.error(f"Thumbnail conversion failed: {result_convert.stderr}")
+            thumbnail_path = None
 
     full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
@@ -178,7 +183,6 @@ def download_audio(url: str) -> str:
     mp3_filename = base + ".mp3"
     
     if thumbnail_path and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
-        # Команда с обложкой; добавляем опцию -disposition:v attached_pic
         cmd = [
             "ffmpeg", "-y",
             "-i", temp_filename,
