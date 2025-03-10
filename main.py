@@ -135,17 +135,19 @@ def download_video(url: str) -> str:
     return filename
 
 def download_audio(url: str) -> str:
+    """
+    Downloads the audio as an MP3 using yt_dlp.
+    Then, uses ffmpeg to re-mux the file and embed metadata.
+    It extracts the video's title, attempts to split it into artist and song title,
+    and renames the final file to a sanitized version of the full title.
+    """
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': 'temp/%(id)s.%(ext)s',
+        'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',
-        'external_downloader': 'aria2c',
-        'external_downloader_args': ['-x16', '-s16', '-k5M'],
-        'socket_timeout': 30,
-        'noprogress': True,
-        'writethumbnail': True,
+        'addmetadata': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -155,79 +157,33 @@ def download_audio(url: str) -> str:
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
-        logger.info(f"Extracted metadata: {info_dict.get('title')}, uploader: {info_dict.get('uploader')}, duration: {info_dict.get('duration')}")
         temp_filename = ydl.prepare_filename(info_dict)
+        base, _ = os.path.splitext(temp_filename)
+        mp3_temp = base + ".mp3"
     
-    if not os.path.exists(temp_filename):
-        raise FileNotFoundError(f"Downloaded file {temp_filename} not found")
-    
-    base, _ = os.path.splitext(temp_filename)
-    
-    # Извлечение метаданных
-    full_title = info_dict.get("title", "Unknown Title")
+    full_title = info_dict.get("title", info_dict.get("id"))
     artist, song_title = parse_title(full_title)
-    if not artist:
-        artist = info_dict.get("uploader", "Unknown Artist")
-    
-    upload_date = info_dict.get('upload_date', '')
-    if upload_date:
-        upload_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
-    album = info_dict.get('album', '')
-    duration = info_dict.get('duration', 0)
-    
-    # Обработка обложки
-    thumbnail_path = None
-    webp_thumb = base + ".webp"
-    if os.path.exists(webp_thumb):
-        jpg_thumb = base + ".jpg"
-        cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
-        result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
-        if result_convert.returncode == 0 and os.path.exists(jpg_thumb):
-            thumbnail_path = jpg_thumb
-    
-    mp3_filename = base + ".mp3"
-    
-    # Сборка команды FFmpeg
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', temp_filename,
-        '-id3v2_version', '3',
-        '-metadata', f'title={song_title}',
-        '-metadata', f'artist={artist}',
-        '-metadata', f'album={album}',
-        '-metadata', f'date={upload_date}',
-        '-metadata', f'TLEN={duration}',
-        '-c:a', 'copy',
-        '-loglevel', 'error',
+    if artist is None:
+        artist = ""
+        song_title = full_title
+
+    sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
+    new_filename = sanitized_title + ".mp3"
+
+    command = [
+        "ffmpeg", "-y", "-i", mp3_temp,
+        "-metadata", f"title={song_title}",
+        "-metadata", f"artist={artist}",
+        "-c", "copy",
+        new_filename
     ]
-    
-    if thumbnail_path:
-        cmd += [
-            '-i', thumbnail_path,
-            '-map', '0:a',
-            '-map', '1:v',
-            '-disposition:v', 'attached_pic'
-        ]
-    else:
-        cmd += ['-map', '0:a']
-    
-    cmd.append(mp3_filename)
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True)
     if result.returncode != 0:
-        logger.error(f"FFmpeg error: {result.stderr}")
-        raise RuntimeError(f"Audio conversion failed: {result.stderr}")
-    
-    # Очистка временных файлов
-    temp_files = [temp_filename, webp_thumb, thumbnail_path]
-    for f in temp_files:
-        if f and os.path.exists(f):
-            try:
-                os.remove(f)
-            except Exception as e:
-                logger.warning(f"Failed to delete {f}: {str(e)}")
-    
-    return mp3_filename
+        logger.error(f"ffmpeg error: {result.stderr.decode()}")
+        new_filename = mp3_temp  # fallback if ffmpeg fails
+    else:
+        os.remove(mp3_temp)
+    return new_filename
 
 # ------------------ Telegram Bot Handlers ------------------
 
