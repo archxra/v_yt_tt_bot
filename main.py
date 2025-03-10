@@ -2,7 +2,8 @@ import os
 import re
 import logging
 import subprocess
-import asyncio
+import threading
+import time
 from flask import Flask, request
 from telegram import Update
 from telegram.ext import (
@@ -42,19 +43,26 @@ app_loop = None
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
-    # Потокобезопасное получение event loop
+    json_data = request.get_json(force=True)
+    
     with app_loop_lock:
         loop = app_loop
     
     if not loop:
-        return "Event loop not initialized", 500
+        return "Event loop not ready", 500
 
-    # Обработка обновления через правильный event loop
-    future = asyncio.run_coroutine_threadsafe(
-        application.process_update(update), 
-        loop
-    )
-    future.result(timeout=10)
+    try:
+        update = Update.de_json(json_data, application.bot)
+        future = asyncio.run_coroutine_threadsafe(
+            application.process_update(update),
+            loop
+        )
+        future.result(timeout=15)
+    except Exception as e:
+        logger.error(f"Processing error: {str(e)}")
+        return "Internal error", 500
+    
+    return "OK", 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -221,13 +229,13 @@ def run_event_loop():
     global app_loop, application
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
-    # Saving a reference to the event loop
+
     with app_loop_lock:
         app_loop = loop
 
-    # Initializing the bot in the correct thread
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Добавление обработчиков команд
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("mp3", mp3_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -239,18 +247,17 @@ def run_event_loop():
             ping_handler
         )
     )
-    
-    # Setting up a webhook
+
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://v-yt-tt-bot.onrender.com/webhook")
+    loop.run_until_complete(application.initialize())
     loop.run_until_complete(application.bot.set_webhook(WEBHOOK_URL))
     
-    # Infinite processing loop
     loop.run_forever()
 
 def main() -> None:
-    # Starting a thread with an event loop
-    threading.Thread(target=run_event_loop, daemon=True).start()
-    time.sleep(2)  # Waiting for initialization
-    
+    event_loop_thread = threading.Thread(target=run_event_loop, daemon=True)
+    event_loop_thread.start()
+    time.sleep(2)
     run_flask()
 
 if __name__ == '__main__':
