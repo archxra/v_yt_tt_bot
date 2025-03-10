@@ -149,57 +149,71 @@ def download_audio(url: str) -> str:
         'outtmpl': 'temp/%(id)s.%(ext)s',
         'noplaylist': True,
         'cookiefile': 'cookies.txt',
-        'external_downloader': 'aria2c',  # Используем быстрый загрузчик
-        'external_downloader_args': ['-x16', '-s16', '-k5M'],  # Параллельные потоки
+        'external_downloader': 'aria2c',
+        'external_downloader_args': ['-x16', '-s16', '-k5M'],
         'socket_timeout': 30,
         'noprogress': True,
+        'writethumbnail': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'writethumbnail': True,  # Скачиваем обложку
-        'postprocessor_args': {
-            'default': ['-metadata', 'title=%(title)s',
-                        '-metadata', 'artist=%(artist)s',
-                        '-metadata', 'album=%(album)s',
-                        '-metadata', 'date=%(upload_date)s']
-        },
-        'concurrent_fragment_downloads': 8
     }
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info_dict)
-        base, _ = os.path.splitext(filename)
-        
-        # Добавляем обложку
-        thumbnail = base + ".webp"
-        if os.path.exists(thumbnail):
-            os.rename(thumbnail, base + ".jpg")
-            thumbnail = base + ".jpg"
-        
-        # Конвертация с метаданными
-        mp3_filename = base + ".mp3"
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', filename,
-            '-i', thumbnail,
-            '-map', '0:0',
-            '-map', '1:0',
-            '-c', 'copy',
-            '-id3v2_version', '3',
-            '-metadata:s:v', 'title="Album cover"',
-            '-metadata:s:v', 'comment="Cover (front)"',
-            mp3_filename
-        ]
-        subprocess.run(cmd, check=True)
-        
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info_dict)
+            base, _ = os.path.splitext(filename)
+            
+            # Обработка обложки
+            thumbnail = base + ".webp"
+            if os.path.exists(thumbnail):
+                os.rename(thumbnail, base + ".jpg")
+                thumbnail = base + ".jpg"
+            else:
+                thumbnail = None
+            
+            # Парсинг метаданных
+            full_title = info_dict.get('title', 'Unknown Title')
+            artist, song_title = parse_title(full_title)
+            if not artist:
+                artist = info_dict.get('uploader', 'Unknown Artist')
+            
+            # Конвертация
+            mp3_filename = base + ".mp3"
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', filename,
+                '-metadata', f'title={song_title}',
+                '-metadata', f'artist={artist}',
+                '-c', 'copy',
+                '-id3v2_version', '3',
+                mp3_filename
+            ]
+            
+            if thumbnail:
+                cmd += ['-i', thumbnail, '-map', '0:0', '-map', '1:0',
+                        '-metadata:s:v', 'title="Album cover"',
+                        '-metadata:s:v', 'comment="Cover (front)"']
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"FFmpeg error: {result.stderr}")
+                raise RuntimeError("Audio conversion failed")
+            
+            return mp3_filename
+            
+    finally:
         # Очистка временных файлов
-        os.remove(filename)
-        os.remove(thumbnail)
-        
-    return mp3_filename
+        temp_files = [filename, thumbnail, base + ".webm", base + ".jpg"]
+        for f in temp_files:
+            if f and os.path.exists(f):
+                try:
+                    os.remove(f)
+                except Exception as e:
+                    logger.warning(f"Failed to delete {f}: {str(e)}")
 
 # ------------------ Telegram Bot Handlers ------------------
 
