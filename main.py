@@ -89,11 +89,11 @@ def extract_url(text: str) -> str:
 
 def parse_title(full_title: str):
     """
-    Ищет в заголовке видео распространённые разделители (тире, en-dash, em-dash, двоеточие).
-    Если найден, разделяет заголовок на исполнителя и название трека.
-    Иначе возвращает (None, full_title).
+    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
+    If found, splits the title into artist and song title.
+    Otherwise, returns (None, full_title).
     """
-    delimiters = ['-', '–', '—', ':']
+    delimiters = ['-', '-', '–', '—', ':']
     index = None
     chosen_delim = None
     for delim in delimiters:
