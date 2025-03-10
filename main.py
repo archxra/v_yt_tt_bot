@@ -137,8 +137,8 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     """
     Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg, затем принудительно
-    интерпретирует как JPEG и вставляет в mp3.
+    Если доступна обложка (thumbnail) в формате webp, конвертирует её в jpg с помощью ffmpeg,
+    затем использует полученный jpg для вставки в mp3 с помощью опции -disposition:v attached_pic.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -163,12 +163,12 @@ def download_audio(url: str) -> str:
     
     base, _ = os.path.splitext(temp_filename)
     
-    # Проверяем наличие обложки (WebP)
+    # Проверяем наличие обложки (webp)
     thumbnail_path = None
     webp_thumb = base + ".webp"
     if os.path.exists(webp_thumb) and os.path.getsize(webp_thumb) > 0:
         jpg_thumb = base + ".jpg"
-        # Конвертация webp -> jpg с помощью ffmpeg
+        # Конвертируем webp -> jpg с помощью ffmpeg
         cmd_convert = ["ffmpeg", "-y", "-i", webp_thumb, jpg_thumb]
         result_convert = subprocess.run(cmd_convert, capture_output=True, text=True)
         if result_convert.returncode == 0 and os.path.exists(jpg_thumb):
@@ -181,27 +181,21 @@ def download_audio(url: str) -> str:
     artist, song_title = parse_title(full_title)
     if not artist:
         artist = info_dict.get("uploader", "Unknown Artist")
-    # Если длительность есть, можно попробовать передать её (но обычно проигрыватели вычисляют её автоматически)
-    duration = info_dict.get("duration", "")
     
     mp3_filename = base + ".mp3"
     
     if thumbnail_path and os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+        # Убираем "-f image2" и "-c:v mjpeg", чтобы ffmpeg сам определил формат обложки
         cmd = [
             "ffmpeg", "-y",
             "-i", temp_filename,
-            "-f", "image2", "-c:v", "mjpeg", "-i", thumbnail_path,
+            "-i", thumbnail_path,
             "-map", "0:a",
-            "-map", "1:v",
+            "-map", "1",
             "-c:a", "libmp3lame", "-b:a", "192k",
             "-id3v2_version", "3",
             "-metadata", f"title={song_title}",
             "-metadata", f"artist={artist}",
-            # Можно добавить длительность, если требуется (но не все проигрыватели её используют)
-            "-metadata", f"duration={duration}",
-            "-metadata:s:v", 'title="Album cover"',
-            "-metadata:s:v", 'comment="Cover (front)"',
-            "-metadata:s:v", 'mimetype=image/jpeg',
             "-disposition:v", "attached_pic",
             "-loglevel", "error",
             mp3_filename
@@ -214,7 +208,6 @@ def download_audio(url: str) -> str:
             "-id3v2_version", "3",
             "-metadata", f"title={song_title}",
             "-metadata", f"artist={artist}",
-            "-metadata", f"duration={duration}",
             "-loglevel", "error",
             mp3_filename
         ]
