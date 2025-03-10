@@ -137,7 +137,8 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     """
     Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, переименовывает её в jpg и вставляет в mp3.
+    Если доступна обложка (thumbnail) в формате webp, переименовывает её в jpg, затем принудительно
+    интерпретирует как JPEG и вставляет в mp3.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -177,20 +178,20 @@ def download_audio(url: str) -> str:
     mp3_filename = base + ".mp3"
     
     if thumbnail_path and os.path.exists(thumbnail_path):
+        # Принудительно указываем, что второй вход — изображение JPEG
         cmd = [
             "ffmpeg", "-y",
             "-i", temp_filename,
-            "-i", thumbnail_path,
+            "-f", "image2", "-c:v", "mjpeg", "-i", thumbnail_path,
             "-map", "0:a",
             "-map", "1:v",
             "-c:a", "libmp3lame", "-b:a", "192k",
-            "-c:v", "copy",
+            "-id3v2_version", "3",
             "-metadata", f"title={song_title}",
             "-metadata", f"artist={artist}",
             "-metadata:s:v", 'title="Album cover"',
             "-metadata:s:v", 'comment="Cover (front)"',
             "-metadata:s:v", 'mimetype=image/jpeg',
-            "-id3v2_version", "3",
             "-loglevel", "error",
             mp3_filename
         ]
@@ -211,6 +212,7 @@ def download_audio(url: str) -> str:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
+    # Удаляем временные файлы
     try:
         os.remove(temp_filename)
     except Exception:
