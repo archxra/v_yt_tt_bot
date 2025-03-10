@@ -136,10 +136,9 @@ def download_video(url: str) -> str:
 
 def download_audio(url: str) -> str:
     """
-    Downloads the audio as an MP3 using yt_dlp.
-    Then, uses ffmpeg to re-mux the file and embed metadata.
-    It extracts the video's title, attempts to split it into artist and song title,
-    and renames the final file to a sanitized version of the full title.
+    Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
+    Если доступна обложка (thumbnail) в формате webp, используется postprocessor yt_dlp для конвертации,
+    а затем ffmpeg перекодирует аудио с установкой метаданных.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -167,20 +166,23 @@ def download_audio(url: str) -> str:
         artist = ""
         song_title = full_title
 
+    # Для финального файла используем перекодирование, чтобы можно было установить метаданные
     sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     new_filename = sanitized_title + ".mp3"
 
     command = [
         "ffmpeg", "-y", "-i", mp3_temp,
+        "-c:a", "libmp3lame", "-b:a", "192k",
         "-metadata", f"title={song_title}",
         "-metadata", f"artist={artist}",
-        "-c", "copy",
+        "-id3v2_version", "3",
+        "-loglevel", "error",
         new_filename
     ]
-    result = subprocess.run(command, capture_output=True)
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
-        logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback if ffmpeg fails
+        logger.error(f"FFmpeg error: {result.stderr}")
+        raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     else:
         os.remove(mp3_temp)
     return new_filename
