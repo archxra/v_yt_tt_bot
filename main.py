@@ -159,13 +159,12 @@ def download_audio(url: str) -> str:
     if not os.path.exists(temp_filename):
         raise FileNotFoundError(f"Downloaded file {temp_filename} not found")
     
-    base, ext = os.path.splitext(temp_filename)
+    base, _ = os.path.splitext(temp_filename)
     
     # Пытаемся найти обложку (yt_dlp может скачать её в формате .webp)
     thumbnail_path = None
     webp_thumb = base + ".webp"
     if os.path.exists(webp_thumb):
-        # Переименовываем в jpg, так как ffmpeg обычно удобнее работает с jpg
         jpg_thumb = base + ".jpg"
         os.rename(webp_thumb, jpg_thumb)
         thumbnail_path = jpg_thumb
@@ -175,11 +174,8 @@ def download_audio(url: str) -> str:
     if not artist:
         artist = info_dict.get("uploader", "Unknown Artist")
     
-    # Формируем имя выходного mp3 файла
-    sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     mp3_filename = base + ".mp3"
-
-    # Если обложка доступна, добавляем её как второй вход
+    
     if thumbnail_path and os.path.exists(thumbnail_path):
         cmd = [
             "ffmpeg", "-y",
@@ -193,12 +189,12 @@ def download_audio(url: str) -> str:
             "-metadata", f"artist={artist}",
             "-metadata:s:v", 'title="Album cover"',
             "-metadata:s:v", 'comment="Cover (front)"',
+            "-metadata:s:v", 'mimetype=image/jpeg',
             "-id3v2_version", "3",
             "-loglevel", "error",
             mp3_filename
         ]
     else:
-        # Если обложки нет, просто конвертируем аудио
         cmd = [
             "ffmpeg", "-y",
             "-i", temp_filename,
@@ -215,7 +211,6 @@ def download_audio(url: str) -> str:
         logger.error(f"FFmpeg error: {result.stderr}")
         raise RuntimeError(f"Audio conversion failed: {result.stderr}")
     
-    # Удаляем временные файлы
     try:
         os.remove(temp_filename)
     except Exception:
