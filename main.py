@@ -171,16 +171,17 @@ def download_audio(url: str) -> str:
     }
     
     thumbnail = None  # Инициализация переменной
+    base = None  # Инициализация переменной
+    thumbnail = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info_dict)
             
-            # Проверка существования файла после скачивания
             if not os.path.exists(filename):
                 raise FileNotFoundError(f"Downloaded file {filename} not found")
             
-            base, _ = os.path.splitext(filename)
+            base, _ = os.path.splitext(filename)  # Теперь base всегда определен
             
             # Обработка обложки
             thumbnail_path = base + ".webp"
@@ -225,13 +226,18 @@ def download_audio(url: str) -> str:
             return mp3_filename
             
     finally:
-        temp_files = [
-            filename, 
-            thumbnail,  # Теперь переменная всегда определена
-            base + ".webp",
-            base + ".webm",
-            base + ".jpg"
-        ]
+        temp_files = []
+        if filename:
+            temp_files.append(filename)
+        if base:  # Проверка на существование base
+            temp_files.extend([
+                base + ".webp",
+                base + ".webm",
+                base + ".jpg",
+                base + ".mp3"
+            ])
+        if thumbnail:
+            temp_files.append(thumbnail)
         for f in temp_files:
             if f and os.path.exists(f):
                 try:
