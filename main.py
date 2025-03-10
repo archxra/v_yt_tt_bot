@@ -6,7 +6,7 @@ import asyncio
 import threading
 import time
 from flask import Flask, request
-from telegram import Update
+from telegram import Update, Message
 from telegram.ext import (
     Application,
     CommandHandler,
