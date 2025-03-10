@@ -176,6 +176,7 @@ def download_audio(url: str) -> str:
             info_dict = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info_dict)
             
+            # Проверка существования файла после скачивания
             if not os.path.exists(filename):
                 raise FileNotFoundError(f"Downloaded file {filename} not found")
             
@@ -355,6 +356,9 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as e:
         logger.error(f"Critical MP3 error: {str(e)}", exc_info=True)
         await handle_error(update, progress_msg, "‼️ Interner Serverfehler")
+
+    except telegram.error.TimedOut:
+        await update.message.reply_text("⌛ Das Timeout ist abgelaufen, versuchen Sie es später")
 
 async def handle_error(update: Update, progress_msg: Optional[Message], text: str):
     """Унифицированная обработка ошибок"""
