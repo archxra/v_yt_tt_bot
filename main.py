@@ -5,6 +5,7 @@ import subprocess
 import asyncio
 import threading
 import time
+from typing import Optional
 from flask import Flask, request
 from telegram import Update, Message
 from telegram.ext import (
@@ -46,7 +47,7 @@ app_loop = None
 def webhook_handler():
     try:
         json_data = request.get_json(force=True)
-        logger.debug(f"Raw update: {json_data}")  # Логирование сырых данных
+        logger.debug(f"Raw update: {json_data}")
 
         with app_loop_lock:
             loop = app_loop
@@ -57,8 +58,15 @@ def webhook_handler():
 
         update = Update.de_json(json_data, application.bot)
         
-        # Логирование типа обновления
-        logger.info(f"Processing update: {update.update_id} [type: {update.effective_message.content_type if update.effective_message else 'no message'}]")
+        # Безопасное определение типа сообщения
+        msg_type = 'no_message'
+        if update.effective_message:
+            if hasattr(update.effective_message, 'content_type'):
+                msg_type = update.effective_message.content_type
+            else:
+                msg_type = 'special_message'
+        
+        logger.info(f"Processing update: {update.update_id} [type: {msg_type}]")
         
         future = asyncio.run_coroutine_threadsafe(
             application.process_update(update),
@@ -286,16 +294,19 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error(f"Critical MP3 error: {str(e)}", exc_info=True)
         await handle_error(update, progress_msg, "‼️ Interner Serverfehler")
 
-async def handle_error(update: Update, progress_msg: Message, text: str):
+async def handle_error(update: Update, progress_msg: Optional[Message], text: str):
     """Унифицированная обработка ошибок"""
     try:
         if progress_msg:
             await progress_msg.delete()
-        await update.message.reply_text(text)
+        if update and update.message:
+            await update.message.reply_text(text)
     except Exception as e:
-        logger.error(f"Error handling failed: {str(e)}")
+        logger.error(f"Error handling failed: {str(e)}", exc_info=True)
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text:
+        return
     if update.message.text.strip().lower() == "пинг":
         await update.message.reply_text("Der Bot funktioniert erfolgreich!!")
 
