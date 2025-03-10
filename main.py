@@ -72,7 +72,12 @@ def webhook_handler():
             application.process_update(update),
             loop
         )
-        future.result(timeout=20)
+        
+        try:
+            future.result(timeout=30)  # Увеличенный таймаут
+        except TimeoutError:
+            logger.error("🕒 Превышено время обработки обновления (30 сек)")
+            return "Timeout", 500
 
     except Exception as e:
         logger.error(f"Fatal webhook error: {str(e)}", exc_info=True)
@@ -97,27 +102,20 @@ def extract_url(text: str) -> str:
             return url
     return None
 
-def parse_title(full_title: str):
-    """
-    Ищет в заголовке видео распространённые разделители (тире, en-dash, em-dash, двоеточие).
-    Если найден, разделяет заголовок на исполнителя и название трека.
-    Иначе возвращает (None, full_title).
-    """
-    delimiters = ['-', '–', '—', ':']
-    index = None
-    chosen_delim = None
-    for delim in delimiters:
-        idx = full_title.find(delim)
-        if idx != -1:
-            if index is None or idx < index:
-                index = idx
-                chosen_delim = delim
-    if index is not None:
-        artist = full_title[:index].strip()
-        song_title = full_title[index + len(chosen_delim):].strip()
-        return artist, song_title
-    else:
-        return None, full_title
+def parse_title(full_title: str) -> tuple:
+    # Улучшенный парсинг с приоритетом разделителей
+    patterns = [
+        r'(.*?)\s*[-–—:]\s*(.*)',  # Основной паттерн
+        r'(.*?)\s*[\"“](.*?)[\"”]',  # Название в кавычках
+        r'(.*?)\s*\((.*?)\)'  # Название в скобках
+    ]
+    
+    for pattern in patterns:
+        match = re.match(pattern, full_title)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+    
+    return None, full_title
 
 # ------------------ Download Functions ------------------
 
@@ -148,47 +146,60 @@ def download_video(url: str) -> str:
 def download_audio(url: str) -> str:
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': '%(id)s.%(ext)s',
+        'outtmpl': 'temp/%(id)s.%(ext)s',
         'noplaylist': True,
-        'quiet': True,
         'cookiefile': 'cookies.txt',
-        'addmetadata': True,
+        'external_downloader': 'aria2c',  # Используем быстрый загрузчик
+        'external_downloader_args': ['-x16', '-s16', '-k5M'],  # Параллельные потоки
+        'socket_timeout': 30,
+        'noprogress': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'writethumbnail': True,  # Скачиваем обложку
+        'postprocessor_args': {
+            'default': ['-metadata', 'title=%(title)s',
+                        '-metadata', 'artist=%(artist)s',
+                        '-metadata', 'album=%(album)s',
+                        '-metadata', 'date=%(upload_date)s']
+        },
+        'concurrent_fragment_downloads': 8
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
-        temp_filename = ydl.prepare_filename(info_dict)
-        base, _ = os.path.splitext(temp_filename)
-        mp3_temp = base + ".mp3"
-    
-    full_title = info_dict.get("title", info_dict.get("id"))
-    artist, song_title = parse_title(full_title)
-    if artist is None:
-        artist = ""
-        song_title = full_title
-
-    sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
-    new_filename = sanitized_title + ".mp3"
-
-    command = [
-        "ffmpeg", "-y", "-i", mp3_temp,
-        "-metadata", f"title={song_title}",
-        "-metadata", f"artist={artist}",
-        "-c", "copy",
-        new_filename
-    ]
-    result = subprocess.run(command, capture_output=True)
-    if result.returncode != 0:
-        logger.error(f"ffmpeg error: {result.stderr.decode()}")
-        new_filename = mp3_temp  # fallback, если ffmpeg не сработал
-    else:
-        os.remove(mp3_temp)
-    return new_filename
+        filename = ydl.prepare_filename(info_dict)
+        base, _ = os.path.splitext(filename)
+        
+        # Добавляем обложку
+        thumbnail = base + ".webp"
+        if os.path.exists(thumbnail):
+            os.rename(thumbnail, base + ".jpg")
+            thumbnail = base + ".jpg"
+        
+        # Конвертация с метаданными
+        mp3_filename = base + ".mp3"
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', filename,
+            '-i', thumbnail,
+            '-map', '0:0',
+            '-map', '1:0',
+            '-c', 'copy',
+            '-id3v2_version', '3',
+            '-metadata:s:v', 'title="Album cover"',
+            '-metadata:s:v', 'comment="Cover (front)"',
+            mp3_filename
+        ]
+        subprocess.run(cmd, check=True)
+        
+        # Очистка временных файлов
+        os.remove(filename)
+        os.remove(thumbnail)
+        
+    return mp3_filename
 
 # ------------------ Telegram Bot Handlers ------------------
 
@@ -271,11 +282,20 @@ async def mp3_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         
         # Отправка аудио
         with open(filename, 'rb') as audio_file:
+            duration = info_dict.get('duration', 0)
+            thumb = open(base + ".jpg", 'rb') if os.path.exists(base + ".jpg") else None
+            
             await update.message.reply_audio(
                 audio=audio_file,
-                title=os.path.splitext(os.path.basename(filename))[0],
-                performer="YouTube Converter"
+                title=song_title,
+                performer=artist,
+                duration=int(duration),
+                thumb=thumb,
+                timeout=30
             )
+            
+        if thumb:
+            thumb.close()
         
         # Финализация
         os.remove(filename)
@@ -320,7 +340,7 @@ def run_event_loop():
     with app_loop_lock:
         app_loop = loop
 
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_TOKEN).pool_timeout(30).build()
     
     # Добавление обработчиков команд
     application.add_handler(CommandHandler("start", start_command))
