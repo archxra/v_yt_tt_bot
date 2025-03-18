@@ -112,19 +112,23 @@ def parse_title(full_title: str):
 # ------------------ Download Functions ------------------
 
 def download_video(url: str) -> str:
-    ydl_opts = {
-        'outtmpl': '%(id)s.%(ext)s',
+    # Опции для извлечения информации без загрузки
+    ydl_opts_info = {
+        'format': 'mp4',
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',
     }
-    if 'pin.it' in url.lower():
-        ydl_opts['format'] = 'bestvideo+bestaudio/best'
-        ydl_opts['merge_output_format'] = 'mp4'
-    else:
-        ydl_opts['format'] = 'mp4'
+    with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        # Проверяем приблизительный размер файла (в байтах)
+        filesize = info_dict.get('filesize_approx') or info_dict.get('filesize')
+        if filesize and filesize > 512 * 1024 * 1024:
+            raise RuntimeError("Видео слишком большое (превышает 512 Мб)")
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    # Если размер в норме, переходим к фактической загрузке
+    ydl_opts_download = ydl_opts_info.copy()  # можно использовать те же опции для загрузки
+    with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
         if not filename.endswith('.mp4'):
@@ -211,6 +215,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         with open(filename, 'rb') as video:
             await update.message.reply_video(video=video)
         os.remove(filename)
+    except RuntimeError as e:
+        # Если возникло исключение из-за слишком большого файла
+        logger.error(f"Fehler beim Herunterladen von Videos: {e}", exc_info=True)
+        await update.message.reply_text(f"⚠️ {e}")
     except Exception as e:
         logger.error(f"Fehler beim Herunterladen von Videos: {e}", exc_info=True)
         await update.message.reply_text("Fehler beim Herunterladen des Videos. Überprüfen Sie den Link und die Verfügbarkeit des Videos.")
