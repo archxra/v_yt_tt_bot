@@ -64,10 +64,10 @@ def webhook_handler():
             future.result(timeout=30)
         except TimeoutError:
             logger.error("🕒 Превышено время обработки обновления (30 сек)")
-            return "Timeout", 500
     except Exception as e:
         logger.error(f"Fatal webhook error: {str(e)}", exc_info=True)
-        return "Internal Server Error", 500
+    
+    # Всегда возвращаем 200 OK, чтобы Telegram не повторял обновление
     return "OK", 200
 
 def run_flask():
