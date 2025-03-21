@@ -32,7 +32,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'  # Замените на ваш токен
+# Замените на ваш токен
+TELEGRAM_TOKEN = '7748710830:AAFY98we_u6AQf8QiyfyAwhsfX8Hw8iK7kA'
 
 # ------------------ Flask App ------------------
 
@@ -42,7 +43,22 @@ app = Flask(__name__)
 def home():
     return "I'm alive!"
 
-# Global event loop will be created in run_event_loop()
+# ------------------ Cookie File Selection ------------------
+
+def get_cookie_file(url: str) -> str:
+    """
+    Возвращает путь к файлу куки в зависимости от домена ссылки.
+    Для YouTube – cookies_youtube.txt, для Pinterest – cookies_pinterest.txt.
+    Если ссылка не соответствует, возвращает cookies.txt.
+    """
+    url_lower = url.lower()
+    if "youtube.com" in url_lower or "youtu.be" in url_lower or "tiktok.com" in url_lower:
+        return "cookies_youtube.txt"
+    elif "pinterest.com" in url_lower or "pin.it" in url_lower:
+        return "cookies_pinterest.txt"
+    return "cookies.txt"
+
+# ------------------ Webhook Handler ------------------
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
@@ -67,7 +83,6 @@ def webhook_handler():
     except Exception as e:
         logger.error(f"Fatal webhook error: {str(e)}", exc_info=True)
     
-    # Всегда возвращаем 200 OK, чтобы Telegram не повторял обновление
     return "OK", 200
 
 def run_flask():
@@ -89,9 +104,9 @@ def extract_url(text: str) -> str:
 
 def parse_title(full_title: str):
     """
-    Looks for common delimiters (hyphen, en-dash, em-dash, colon) in the title.
-    If found, splits the title into artist and song title.
-    Otherwise, returns (None, full_title).
+    Ищет в заголовке видео распространённые разделители (тире, en-dash, em-dash, двоеточие).
+    Если найден, разделяет заголовок на исполнителя и название трека.
+    Иначе возвращает (None, full_title).
     """
     delimiters = ['-', '-', '–', '—', ':']
     index = None
@@ -117,7 +132,7 @@ def download_video(url: str) -> str:
         'format': 'mp4',
         'noplaylist': True,
         'quiet': True,
-        'cookiefile': 'cookies.txt',
+        'cookiefile': get_cookie_file(url),
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
     with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
@@ -127,8 +142,7 @@ def download_video(url: str) -> str:
         if filesize and filesize > 512 * 1024 * 1024:
             raise RuntimeError("Видео слишком большое (превышает 512 Мб)")
     
-    # Если размер в норме, переходим к фактической загрузке
-    ydl_opts_download = ydl_opts_info.copy()  # можно использовать те же опции для загрузки
+    ydl_opts_download = ydl_opts_info.copy()
     with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
@@ -141,16 +155,15 @@ def download_video(url: str) -> str:
 
 def download_audio(url: str) -> str:
     """
-    Скачивает аудио (без постпроцессора) в папку temp и конвертирует его с помощью ffmpeg в mp3.
-    Если доступна обложка (thumbnail) в формате webp, используется postprocessor yt_dlp для конвертации,
-    а затем ffmpeg перекодирует аудио с установкой метаданных.
+    Скачивает аудио (без постпроцессора) и конвертирует его в mp3 с помощью yt_dlp с postprocessor'ом.
+    Для YouTube и Pinterest используется соответствующий файл куки.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': '%(id)s.%(ext)s',
         'noplaylist': True,
         'quiet': True,
-        'cookiefile': 'cookies.txt',
+        'cookiefile': get_cookie_file(url),
         'addmetadata': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -172,7 +185,7 @@ def download_audio(url: str) -> str:
         artist = ""
         song_title = full_title
 
-    # Для финального файла используем перекодирование, чтобы можно было установить метаданные
+    # Используем перекодирование для записи метаданных
     sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     new_filename = sanitized_title + ".mp3"
 
@@ -218,7 +231,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_video(video=video)
         os.remove(filename)
     except RuntimeError as e:
-        # Если возникло исключение из-за слишком большого файла
         logger.error(f"Fehler beim Herunterladen von Videos: {e}", exc_info=True)
         await update.message.reply_text(f"⚠️ {e}")
     except Exception as e:
