@@ -118,6 +118,7 @@ def download_video(url: str) -> str:
         'noplaylist': True,
         'quiet': True,
         'cookiefile': 'cookies.txt',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
     with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
         info_dict = ydl.extract_info(url, download=False)
@@ -156,6 +157,7 @@ def download_audio(url: str) -> str:
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
