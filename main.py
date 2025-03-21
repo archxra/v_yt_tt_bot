@@ -135,15 +135,23 @@ def download_video(url: str) -> str:
         'cookiefile': get_cookie_file(url),
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
+    # Если ссылка принадлежит Pinterest, добавляем Referer-заголовок и меняем формат
+    if any(x in url.lower() for x in ["pinterest.com", "pin.it"]):
+        ydl_opts_info['format'] = 'bestvideo+bestaudio/best'
+        ydl_opts_info['merge_output_format'] = 'mp4'
+        ydl_opts_info['headers'] = {'Referer': 'https://www.pinterest.com/'}
+    else:
+        ydl_opts_info['format'] = 'mp4'
+    
+    # Сначала извлекаем информацию без загрузки для проверки размера
     with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
         info_dict = ydl.extract_info(url, download=False)
-        # Проверяем приблизительный размер файла (в байтах)
         filesize = info_dict.get('filesize_approx') or info_dict.get('filesize')
         if filesize and filesize > 512 * 1024 * 1024:
             raise RuntimeError("Видео слишком большое (превышает 512 Мб)")
     
-    ydl_opts_download = ydl_opts_info.copy()
-    with yt_dlp.YoutubeDL(ydl_opts_download) as ydl:
+    # Фактическая загрузка
+    with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
         info_dict = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info_dict)
         if not filename.endswith('.mp4'):
@@ -153,10 +161,11 @@ def download_video(url: str) -> str:
             filename = new_filename
     return filename
 
+
 def download_audio(url: str) -> str:
     """
     Скачивает аудио (без постпроцессора) и конвертирует его в mp3 с помощью yt_dlp с postprocessor'ом.
-    Для YouTube и Pinterest используется соответствующий файл куки.
+    Для YouTube и Pinterest используется соответствующий файл куки, а для Pinterest добавляется Referer.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -172,6 +181,9 @@ def download_audio(url: str) -> str:
         }],
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
+    # Если ссылка принадлежит Pinterest, добавляем Referer
+    if any(x in url.lower() for x in ["pinterest.com", "pin.it"]):
+        ydl_opts['headers'] = {'Referer': 'https://www.pinterest.com/'}
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
@@ -205,6 +217,7 @@ def download_audio(url: str) -> str:
     else:
         os.remove(mp3_temp)
     return new_filename
+
 
 # ------------------ Telegram Bot Handlers ------------------
 
