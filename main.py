@@ -135,11 +135,13 @@ def download_video(url: str) -> str:
         'cookiefile': get_cookie_file(url),
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
-    # Если ссылка принадлежит Pinterest, добавляем Referer-заголовок и меняем формат
     if any(x in url.lower() for x in ["pinterest.com", "pin.it"]):
         ydl_opts_info['format'] = 'bestvideo+bestaudio/best'
         ydl_opts_info['merge_output_format'] = 'mp4'
-        ydl_opts_info['headers'] = {'Referer': 'https://www.pinterest.com/'}
+        ydl_opts_info['headers'] = {
+            'Referer': 'https://www.pinterest.com/',
+            'X-Pinterest-PWS-Handler': 'true'
+        }
     else:
         ydl_opts_info['format'] = 'mp4'
     
@@ -164,8 +166,7 @@ def download_video(url: str) -> str:
 
 def download_audio(url: str) -> str:
     """
-    Скачивает аудио (без постпроцессора) и конвертирует его в mp3 с помощью yt_dlp с postprocessor'ом.
-    Для YouTube и Pinterest используется соответствующий файл куки, а для Pinterest добавляется Referer.
+    Скачивает аудио с помощью yt-dlp с постпроцессором, используя куки, и для Pinterest добавляет нужные заголовки.
     """
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -181,9 +182,11 @@ def download_audio(url: str) -> str:
         }],
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
     }
-    # Если ссылка принадлежит Pinterest, добавляем Referer
     if any(x in url.lower() for x in ["pinterest.com", "pin.it"]):
-        ydl_opts['headers'] = {'Referer': 'https://www.pinterest.com/'}
+        ydl_opts['headers'] = {
+            'Referer': 'https://www.pinterest.com/',
+            'X-Pinterest-PWS-Handler': 'true'
+        }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=True)
@@ -197,7 +200,6 @@ def download_audio(url: str) -> str:
         artist = ""
         song_title = full_title
 
-    # Используем перекодирование для записи метаданных
     sanitized_title = "".join(c for c in full_title if c.isalnum() or c in " -_").strip()
     new_filename = sanitized_title + ".mp3"
 
@@ -217,7 +219,6 @@ def download_audio(url: str) -> str:
     else:
         os.remove(mp3_temp)
     return new_filename
-
 
 # ------------------ Telegram Bot Handlers ------------------
 
