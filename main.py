@@ -160,7 +160,9 @@ def download_video(url: str) -> str:
             'X-Pinterest-PWS-Handler': 'true'
         }
     elif any(x in url.lower() for x in ["youtube.com", "youtu.be"]):
-        ydl_opts_info['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        # More flexible format selection that works with most YouTube videos
+        ydl_opts_info['format'] = 'best[ext=mp4]/best/bestvideo+bestaudio'
+        ydl_opts_info['merge_output_format'] = 'mp4'
         ydl_opts_info['force_generic_extractor'] = False  # Use YouTube extractor
     else:
         ydl_opts_info['format'] = 'mp4'
