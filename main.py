@@ -5,6 +5,7 @@ import subprocess
 import asyncio
 import threading
 import time
+import requests
 from collections import deque
 from typing import Optional
 from flask import Flask, request
@@ -140,10 +141,11 @@ def download_video(url: str) -> str:
     # Base options
     ydl_opts_info = {
         'noplaylist': True,
-        'quiet': False,  # Changed to False for more debugging info
-        'verbose': True,  # Added for more detailed output
+        'quiet': False,
+        'verbose': True,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'no_warnings': False,  # Show warnings
+        'no_warnings': False,
+        'ignoreerrors': False,
     }
     
     # Add cookie file if exists
@@ -151,6 +153,23 @@ def download_video(url: str) -> str:
     if os.path.exists(cookie_file):
         ydl_opts_info['cookiefile'] = cookie_file
     
+    # Special handling for YouTube Shorts
+    is_youtube_short = False
+    if 'youtube.com/shorts' in url.lower() or ('youtu.be' in url.lower() and '/shorts/' in url.lower()):
+        is_youtube_short = True
+        # For Shorts, use the most basic options and simpler URL
+        video_id = None
+        if 'youtube.com/shorts/' in url.lower():
+            video_id = url.split('youtube.com/shorts/')[1].split('?')[0].split('/')[0]
+        elif 'youtu.be/shorts/' in url.lower():
+            video_id = url.split('youtu.be/shorts/')[1].split('?')[0].split('/')[0]
+        
+        if video_id:
+            logger.info(f"Detected YouTube Short with ID: {video_id}")
+            # Use the regular YouTube video URL instead of Shorts URL
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"Using regular YouTube URL: {url}")
+
     # Platform specific configurations
     if any(x in url.lower() for x in ["pinterest.com", "pin.it"]):
         ydl_opts_info['format'] = 'bestvideo+bestaudio/best'
@@ -160,62 +179,210 @@ def download_video(url: str) -> str:
             'X-Pinterest-PWS-Handler': 'true'
         }
     elif any(x in url.lower() for x in ["youtube.com", "youtu.be"]):
-        # More flexible format selection that works with most YouTube videos
-        ydl_opts_info['format'] = 'best[ext=mp4]/best/bestvideo+bestaudio'
-        ydl_opts_info['merge_output_format'] = 'mp4'
-        ydl_opts_info['force_generic_extractor'] = False  # Use YouTube extractor
+        if is_youtube_short:
+            # For YouTube Shorts, use simpler options
+            ydl_opts_info['format'] = 'best'
+            ydl_opts_info['merge_output_format'] = 'mp4'
+            # Try with generic extractor for Shorts
+            ydl_opts_info['force_generic_extractor'] = True
+        else:
+            # For regular YouTube videos
+            ydl_opts_info['format'] = 'best[ext=mp4]/best'
+            ydl_opts_info['merge_output_format'] = 'mp4'
     else:
         ydl_opts_info['format'] = 'mp4'
     
     try:
-        # Сначала извлекаем информацию без загрузки для проверки размера
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            logger.info(f"Extracting info for URL: {url}")
-            info_dict = ydl.extract_info(url, download=False)
-            filesize = info_dict.get('filesize_approx') or info_dict.get('filesize')
-            if filesize and filesize > 512 * 1024 * 1024:
-                raise RuntimeError("Видео слишком большое (превышает 512 Мб)")
+        # Try downloading with the configured options
+        try:
+            # Extract info first to check size
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                logger.info(f"Extracting info for URL: {url}")
+                info_dict = ydl.extract_info(url, download=False)
+                filesize = info_dict.get('filesize_approx') or info_dict.get('filesize')
+                if filesize and filesize > 512 * 1024 * 1024:
+                    raise RuntimeError("Видео слишком большое (превышает 512 Мб)")
+            
+            # Actual download
+            with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                logger.info(f"Downloading video from URL: {url}")
+                info_dict = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info_dict)
+                logger.info(f"Downloaded file: {filename}")
+        except yt_dlp.utils.DownloadError as e:
+            # First fallback: try with YouTube Premium signature workaround
+            logger.warning(f"Initial download failed: {str(e)}")
+            if "YouTube Premium" in str(e) or "Requested format is not available" in str(e):
+                logger.info("Trying download with YouTube Premium workaround...")
+                ydl_opts_info['format'] = 'best'
+                ydl_opts_info['force_generic_extractor'] = True
+                ydl_opts_info['extractor_args'] = {'youtube': {'skip': ['dash', 'hls']}}
+                
+                with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                    info_dict = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info_dict)
+            # Second fallback: try with different format
+            elif "Requested format is not available" in str(e):
+                logger.info("Trying download with different format...")
+                # Try with a more general format selector
+                ydl_opts_info['format'] = 'best'
+                
+                with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
+                    info_dict = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info_dict)
+            # Third fallback: try with a very basic format
+            else:
+                logger.info("Trying with basic format selection...")
+                # Strip all format options, go with default
+                ydl_opts_basic = {
+                    'noplaylist': True,
+                    'quiet': False,
+                }
+                
+                if os.path.exists(cookie_file):
+                    ydl_opts_basic['cookiefile'] = cookie_file
+                
+                with yt_dlp.YoutubeDL(ydl_opts_basic) as ydl:
+                    info_dict = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info_dict)
         
-        # Фактическая загрузка
-        with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-            logger.info(f"Downloading video from URL: {url}")
-            info_dict = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info_dict)
-            logger.info(f"Downloaded file: {filename}")
-            
-            # Ensure we have an MP4 file
-            if not filename.endswith('.mp4'):
-                base, ext = os.path.splitext(filename)
-                new_filename = base + '.mp4'
-                if os.path.exists(filename):
-                    os.rename(filename, new_filename)
-                    filename = new_filename
-                    logger.info(f"Renamed to: {filename}")
-                else:
-                    # If the file doesn't exist with the original extension, try common extensions
-                    for ext in ['.webm', '.mkv', '.mp4']:
-                        test_file = base + ext
-                        if os.path.exists(test_file):
+        # Ensure we have an MP4 file
+        if not filename.endswith('.mp4'):
+            base, ext = os.path.splitext(filename)
+            new_filename = base + '.mp4'
+            if os.path.exists(filename):
+                os.rename(filename, new_filename)
+                filename = new_filename
+                logger.info(f"Renamed to: {filename}")
+            else:
+                # If the file doesn't exist with the original extension, try common extensions
+                for ext in ['.webm', '.mkv', '.mp4', '.jpg', '.png', '.jpeg', '.webp']:
+                    test_file = base + ext
+                    if os.path.exists(test_file):
+                        if ext in ['.jpg', '.png', '.jpeg', '.webp']:
+                            # Convert image to video
+                            logger.info(f"Converting image {test_file} to video {new_filename}")
+                            cmd = [
+                                'ffmpeg', '-y', '-loop', '1', '-i', test_file,
+                                '-c:v', 'libx264', '-t', '5', '-pix_fmt', 'yuv420p',
+                                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', new_filename
+                            ]
+                            subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                            if os.path.exists(test_file):
+                                os.remove(test_file)
+                        else:
                             os.rename(test_file, new_filename)
-                            filename = new_filename
-                            logger.info(f"Found file with ext {ext}, renamed to: {filename}")
-                            break
-            
-            # Verify the file exists
-            if not os.path.exists(filename):
-                logger.error(f"File not found after download: {filename}")
-                # Look for any file that starts with the base name
-                base_name = os.path.splitext(filename)[0]
-                matching_files = [f for f in os.listdir() if f.startswith(base_name)]
-                if matching_files:
-                    filename = matching_files[0]
-                    logger.info(f"Found alternative file: {filename}")
+                        filename = new_filename
+                        logger.info(f"Found file with ext {ext}, renamed to: {filename}")
+                        break
+        
+        # Verify the file exists
+        if not os.path.exists(filename):
+            logger.error(f"File not found after download: {filename}")
+            # Look for any file that starts with the base name
+            base_name = os.path.splitext(filename)[0]
+            matching_files = [f for f in os.listdir() if f.startswith(base_name)]
+            if matching_files:
+                logger.info(f"Found alternative files: {matching_files}")
+                # Preferably find an MP4
+                mp4_files = [f for f in matching_files if f.endswith('.mp4')]
+                if mp4_files:
+                    filename = mp4_files[0]
                 else:
-                    raise FileNotFoundError(f"No downloaded file found for {url}")
-            
-            return filename
-    except yt_dlp.utils.DownloadError as e:
+                    filename = matching_files[0]
+                logger.info(f"Using file: {filename}")
+            else:
+                # Last resort: For YouTube videos, try direct download via yt-dlp command
+                if any(x in url.lower() for x in ["youtube.com", "youtu.be"]):
+                    try:
+                        video_id = None
+                        if "v=" in url:
+                            video_id = url.split("v=")[1].split("&")[0]
+                        elif "youtu.be/" in url:
+                            video_id = url.split("youtu.be/")[1].split("?")[0]
+                        elif "youtube.com/shorts/" in url:
+                            video_id = url.split("youtube.com/shorts/")[1].split("?")[0]
+                        
+                        if video_id:
+                            output_filename = f"{video_id}.mp4"
+                            cmd = [
+                                "yt-dlp", 
+                                "--format", "best", 
+                                "--output", output_filename,
+                                url
+                            ]
+                            logger.info(f"Running direct yt-dlp command: {' '.join(cmd)}")
+                            result = subprocess.run(cmd, capture_output=True, text=True)
+                            if os.path.exists(output_filename):
+                                filename = output_filename
+                                return filename
+                    except Exception as cmd_err:
+                        logger.error(f"Direct yt-dlp command failed: {cmd_err}")
+                
+                raise FileNotFoundError(f"No downloaded file found for {url}")
+        
+        return filename
+    except (yt_dlp.utils.DownloadError, FileNotFoundError) as e:
         logger.error(f"yt-dlp download error: {str(e)}", exc_info=True)
+        
+        # Last resort: For YouTube videos, try a thumbnail conversion
+        if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+            try:
+                # Extract video ID
+                video_id = None
+                if "v=" in url:
+                    video_id = url.split("v=")[1].split("&")[0]
+                elif "youtu.be/" in url:
+                    video_id = url.split("youtu.be/")[1].split("?")[0]
+                elif "youtube.com/shorts/" in url:
+                    video_id = url.split("youtube.com/shorts/")[1].split("?")[0]
+                
+                if video_id:
+                    # Try using youtube-dl as a subprocess command with specific format
+                    cmd = ["yt-dlp", "--format", "best", "--output", f"{video_id}.%(ext)s", url]
+                    subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    # Check if the download was successful
+                    potential_files = [f for f in os.listdir() if f.startswith(video_id)]
+                    if potential_files:
+                        for pfile in potential_files:
+                            base, ext = os.path.splitext(pfile)
+                            if not ext.lower() == '.mp4':
+                                new_name = f"{base}.mp4"
+                                os.rename(pfile, new_name)
+                                return new_name
+                            return pfile
+                    
+                    # If still not successful, try the thumbnail method
+                    # Use the YouTube image API to get a thumbnail
+                    thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                    logger.info(f"Trying to create video from thumbnail: {thumbnail_url}")
+                    
+                    img_filename = f"{video_id}.jpg"
+                    mp4_filename = f"{video_id}.mp4"
+                    
+                    # Download thumbnail
+                    response = requests.get(thumbnail_url)
+                    with open(img_filename, 'wb') as f:
+                        f.write(response.content)
+                    
+                    if os.path.exists(img_filename):
+                        # Convert thumbnail to 5-second video with text
+                        cmd = [
+                            'ffmpeg', '-y', '-loop', '1', '-i', img_filename,
+                            '-vf', f"drawtext=text='Video konnte nicht automatisch heruntergeladen werden':fontcolor=white:fontsize=24:x=(w-text_w)/2:y=(h-text_h)/2",
+                            '-c:v', 'libx264', '-t', '5', '-pix_fmt', 'yuv420p',
+                            mp4_filename
+                        ]
+                        subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                        if os.path.exists(img_filename):
+                            os.remove(img_filename)
+                        
+                        if os.path.exists(mp4_filename):
+                            return mp4_filename
+            except Exception as e:
+                logger.error(f"Error in last resort download attempt: {e}", exc_info=True)
+        
         raise RuntimeError(f"Downloadfehler: {str(e)}")
     except Exception as e:
         logger.error(f"Error during video download: {str(e)}", exc_info=True)
