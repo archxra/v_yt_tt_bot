@@ -2,3 +2,4 @@ Flask==3.1.0
 python-telegram-bot==21.10
 yt-dlp==2025.2.19
 gunicorn
+requests
